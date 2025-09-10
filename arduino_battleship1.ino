@@ -173,7 +173,10 @@ void drawGhost(uint8_t panel, uint8_t x,uint8_t y,uint8_t len,bool horiz){
 void drawCursor(uint8_t panel, uint8_t x,uint8_t y){ setXY_on(panel, x,y, COL_CURSOR); }
 
 void fillPanel(uint8_t panel, uint32_t color){
-  for (uint8_t y=0;y<H;y++) for (uint8_t x=0;x<W;x++) setXY_on(panel,x,y,color);
+  if (panel==1) p1.fill(color);
+  else if (panel==2) p2.fill(color);
+  else if (panel==3) p3.fill(color);
+  else if (panel==4) p4.fill(color);
   show_on(panel);
 }
 
@@ -252,24 +255,41 @@ void renderGameOverNow(){
 
 struct Btn {
   uint8_t pin;
-  bool last = HIGH;                 // HIGH = solto (por INPUT_PULLUP)
+  bool last = HIGH;
   unsigned long lastChange = 0;
   const unsigned long debounceMs = 25;
 
-  void begin() { pinMode(pin, INPUT_PULLUP); last = digitalRead(pin); }
-  // Retorna true uma vez quando o botão é pressionado (borda de descida)
-  bool fell() {
+  // repeat
+  bool isDown = false;
+  unsigned long pressedAt = 0, lastRepeat = 0;
+  const unsigned long repeatDelay = 300;
+  const unsigned long repeatRate  = 80;
+
+  void begin(){ pinMode(pin, INPUT_PULLUP); last = digitalRead(pin); }
+
+  bool fellRaw() {
     bool now = digitalRead(pin);
-    unsigned long t = millis();
+    auto t = millis();
     if (now != last && (t - lastChange) > debounceMs) {
-      lastChange = t;
-      last = now;
-      if (now == LOW) return true; // pressionou
+      lastChange = t; last = now;
+      if (now == LOW) { isDown = true; pressedAt = t; lastRepeat = t; return true; }
+      isDown = false;
     }
     return false;
   }
-  bool held() const { return digitalRead(pin) == LOW; }
+
+  bool fellOrRepeat() {
+    if (fellRaw()) return true;
+    if (isDown) {
+      auto t = millis();
+      if (t - pressedAt >= repeatDelay && t - lastRepeat >= repeatRate) {
+        lastRepeat = t; return true;
+      }
+    }
+    return false;
+  }
 };
+
 
 Btn bUp1{BTN_1_UP}, bDown1{BTN_1_DOWN}, bLeft1{BTN_1_LEFT}, bRight1{BTN_1_RIGHT}, bRot1{BTN_1_ROTATE}, bOk1{BTN_1_OK};
 Btn bUp2{BTN_2_UP}, bDown2{BTN_2_DOWN}, bLeft2{BTN_2_LEFT}, bRight2{BTN_2_RIGHT}, bRot2{BTN_2_ROTATE}, bOk2{BTN_2_OK};
@@ -294,26 +314,26 @@ void handleButtonsForPlayer(uint8_t player){
   Btn &bRot   = (player==1)? bRot1  : bRot2;
   Btn &bOk    = (player==1)? bOk1   : bOk2;
 
-  if (bUp.fell())   { 
+  if (bUp.fellOrRepeat())   { 
     moveCursor(0,-1);
   }
-  if (bDown.fell())  { 
+  if (bDown.fellOrRepeat())  { 
     moveCursor(0, 1);
   }
-  if (bLeft.fell())  { 
+  if (bLeft.fellOrRepeat())  { 
     moveCursor(-1,0);
   }
-  if (bRight.fell()) { 
+  if (bRight.fellOrRepeat()) { 
     moveCursor(1, 0);
   }
 
-  if (bRot.fell()) {
+  if (bRot.fellRaw()) {
     horizontal = !horizontal;
     if (state==PLACE_1) dirtyP1 = true;
     else if (state==PLACE_2) dirtyP3 = true;
   }
 
-  if (bOk.fell()) {
+  if (bOk.fellRaw()) {
     if (state==PLACE_1 && player==1)      tryConfirmPlacement(1);
     else if (state==PLACE_2 && player==2) tryConfirmPlacement(2);
     else if (state==TURN_1  && player==1) tryShootAt(2);
@@ -329,11 +349,12 @@ void nextStateAfterPlacement(){
   shipIndex = 0; curX=0; curY=0; horizontal=true;
   if (state == PLACE_1) {
     state = PLACE_2;
-    LCD_MSG2(lcd1, F("Jogador 2"), F("posicione navios"));
+    LCD_MSG2(lcd1, F("Aguarde"), F("Vez do Jogador 2"));
+    LCD_MSG2(lcd2, F("Jogador 2"), F("posicione navios"));
   } else {
     state = TURN_1;
     LCD_MSG2(lcd1, F("Sua vez de atirar"), F("Boa sorte!"));
-    LCD_MSG2(lcd2, F("Aguarde"), F("Jogador 1 Atira"));
+    LCD_MSG2(lcd2, F("Aguarde"), F("Jogador 1 Atirar"));
   }
   markAllDirty();
 }
@@ -371,12 +392,10 @@ void tryShootAt(int enemyId){
   c.shot = 1;
   if (c.ship) { 
     c.hit = 1; remaining[enemyId]--; 
-    if (enemyId==2) LCD_MSG(lcd1, F("Acertou!"));
-    else            LCD_MSG(lcd2, F("Acertou!"));
+    LCD_BOTH_MSG(F("Acertou!"));
   }
   else        { 
-    if (enemyId==2) LCD_MSG(lcd1, F("Errou..."));
-    else            LCD_MSG(lcd2, F("Errou..."));
+    LCD_BOTH_MSG(F("Errou..."));
   }
 
   // marcar paineis relevantes como sujos:
