@@ -349,11 +349,12 @@ void nextStateAfterPlacement(){
   shipIndex = 0; curX=0; curY=0; horizontal=true;
   if (state == PLACE_1) {
     state = PLACE_2;
-    LCD_MSG2(lcd1, F("Jogador 2"), F("posicione navios"));
+    LCD_MSG2(lcd1, F("Aguarde"), F("Vez do Jogador 2"));
+    LCD_MSG2(lcd2, F("Jogador 2"), F("posicione navios"));
   } else {
     state = TURN_1;
     LCD_MSG2(lcd1, F("Sua vez de atirar"), F("Boa sorte!"));
-    LCD_MSG2(lcd2, F("Aguarde"), F("Jogador 1 Atira"));
+    LCD_MSG2(lcd2, F("Aguarde"), F("Jogador 1 Atirar"));
   }
   markAllDirty();
 }
@@ -391,12 +392,10 @@ void tryShootAt(int enemyId){
   c.shot = 1;
   if (c.ship) { 
     c.hit = 1; remaining[enemyId]--; 
-    if (enemyId==2) LCD_MSG(lcd1, F("Acertou!"));
-    else            LCD_MSG(lcd2, F("Acertou!"));
+    LCD_BOTH_MSG(F("Acertou!"), F(""));
   }
   else        { 
-    if (enemyId==2) LCD_MSG(lcd1, F("Errou..."));
-    else            LCD_MSG(lcd2, F("Errou..."));
+    LCD_BOTH_MSG(F("Errou..."), F(""));
   }
 
   // marcar paineis relevantes como sujos:
