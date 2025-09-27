@@ -61,15 +61,15 @@ Adafruit_NeoPixel p4(W*H, PIN_P4, NEO_GRB + NEO_KHZ800);
 
 // Paleta
 #define C(r,g,b) p1.Color((r),(g),(b))
-#define COL_WATER1  C(0,0,12)
-#define COL_WATER2  C(0,0,25)
-#define COL_SHIP    C(40,40,40)
-#define COL_HIT     C(200,0,0)    // vermelho (acerto)
-#define COL_MISS    C(80,80,80)   // cinza (erro)  << mudou aqui
-#define COL_CURSOR  C(0,180,0)
-#define COL_GHOST   C(200,200,0)
-#define COL_WIN     C(0,160,0)    // verde vencedor
-#define COL_LOSE    C(200,0,0)    // vermelho perdedor
+#define COL_WATER1  C(0,0,12) // Azul
+#define COL_WATER2  C(0,0,25) // Azul mais claro
+#define COL_SHIP    C(82,59,53) // Amarelo escuro
+#define COL_HIT     C(200,0,0)   // Vermelho
+#define COL_MISS    C(80,80,80)  // Cinza
+#define COL_CURSOR  C(0,180,0)   // Verde
+#define COL_GHOST   C(200,200,0)  // Amarelo
+#define COL_WIN     C(0,160,0)   // Verde
+#define COL_LOSE    C(200,0,0)   // Vermelho
 
 // ===== Tabuleiros =====
 struct Cell { uint8_t ship:1; uint8_t shot:1; uint8_t hit:1; };
@@ -144,7 +144,7 @@ void clearBoards() {
   }
 }
 
-// ===== Render de um painel =====
+// ===== Desenha tabuleiro =====
 void drawChecker(uint8_t panel){
   for (uint8_t y=0;y<H;y++)
   for (uint8_t x=0;x<W;x++)
@@ -164,10 +164,20 @@ void drawShots(uint8_t panel, int id){
   if (B[y][x].shot) setXY_on(panel, x,y, B[y][x].hit? COL_HIT : COL_MISS);
 }
 void drawGhost(uint8_t panel, uint8_t x,uint8_t y,uint8_t len,bool horiz){
+  // Verifica se pode posicionar o navio aqui
+  bool pode = false;
+  if (panel == 1 && state == PLACE_1) {
+    pode = canPlaceOn(1, x, y, len, horiz);
+  } else if (panel == 3 && state == PLACE_2) {
+    pode = canPlaceOn(2, x, y, len, horiz);
+  } else {
+    pode = true; // fallback para outros usos
+  }
+  uint32_t cor = pode ? COL_CURSOR : COL_HIT;
   for (uint8_t k=0;k<len;k++){
     uint8_t gx = horiz? x+k : x;
     uint8_t gy = horiz? y   : y+k;
-    if (gx<W && gy<H) setXY_on(panel, gx,gy, COL_GHOST);
+    if (gx<W && gy<H) setXY_on(panel, gx,gy, cor);
   }
 }
 void drawCursor(uint8_t panel, uint8_t x,uint8_t y){ setXY_on(panel, x,y, COL_CURSOR); }
@@ -192,7 +202,7 @@ void renderIfDirty(){
     clear_on(1); drawChecker(1);
     drawShips(1, 1, true);
     drawShots(1, 1);
-    if (state==PLACE_1) { uint8_t len=FLEET_SIZES[shipIndex]; drawGhost(1,curX,curY,len,horizontal); drawCursor(1,curX,curY); }
+  if (state==PLACE_1) { uint8_t len=FLEET_SIZES[shipIndex]; drawGhost(1,curX,curY,len,horizontal); /* drawCursor(1,curX,curY); */ }
     show_on(1); dirtyP1=false;
   }
   if (dirtyP2) {
@@ -205,7 +215,7 @@ void renderIfDirty(){
     clear_on(3); drawChecker(3);
     drawShips(3, 2, true);
     drawShots(3, 2);
-    if (state==PLACE_2) { uint8_t len=FLEET_SIZES[shipIndex]; drawGhost(3,curX,curY,len,horizontal); drawCursor(3,curX,curY); }
+  if (state==PLACE_2) { uint8_t len=FLEET_SIZES[shipIndex]; drawGhost(3,curX,curY,len,horizontal); /* drawCursor(3,curX,curY); */ }
     show_on(3); dirtyP3=false;
   }
   if (dirtyP4) {
@@ -216,7 +226,7 @@ void renderIfDirty(){
   }
 }
 
-// ===== NOVO: tela final =====
+// ===== Tela final =====
 void renderGameOverNow(){
   int loserId = (winnerId==1)? 2 : 1;
   
@@ -341,9 +351,6 @@ void handleButtonsForPlayer(uint8_t player){
   }
 }
 
-// Aceita apenas C-strings (sem F())
-// ...funções antigas de LCD removidas...
-
 // ===== Jogo =====
 void nextStateAfterPlacement(){
   shipIndex = 0; curX=0; curY=0; horizontal=true;
@@ -435,19 +442,13 @@ void renderAllNow() {
 
 void setup() {
   Serial.begin(9600);
-  while(!Serial){} // Tinkercad
+  while(!Serial){}
 
   lcd1.init(); lcd1.backlight();
   lcd2.init(); lcd2.backlight();
 
   LCD_BOTH_MSG(F("BATALHA NAVAL"), F("Aguarde..."));
   delay(1000);
-  LCD_BOTH_MSG(F("Iniciando LEDS"), F(""));
-
-  p1.begin(); p1.setBrightness(BRIGHTNESS); p1.show();
-  p2.begin(); p2.setBrightness(BRIGHTNESS); p2.show();
-  p3.begin(); p3.setBrightness(BRIGHTNESS); p3.show();
-  p4.begin(); p4.setBrightness(BRIGHTNESS); p4.show();
 
   LCD_BOTH_MSG(F("Iniciando Botoes"), F(""));
 
@@ -464,6 +465,13 @@ void setup() {
   bRight2.begin(); 
   bRot2.begin(); 
   bOk2.begin();
+
+  LCD_BOTH_MSG(F("Iniciando LEDS"), F(""));
+
+  p1.begin(); p1.setBrightness(BRIGHTNESS); p1.show();
+  p2.begin(); p2.setBrightness(BRIGHTNESS); p2.show();
+  p3.begin(); p3.setBrightness(BRIGHTNESS); p3.show();
+  p4.begin(); p4.setBrightness(BRIGHTNESS); p4.show();
 
   LCD_BOTH_MSG(F("Preenchendo"), F("tabuleiros..."));
   
