@@ -372,6 +372,73 @@ void handleButtonsForPlayer(uint8_t player){
   }
 }
 
+
+// ---------- TELEMETRIA ----------
+unsigned long matchStartMs = 0;
+int gid = 0; // id da partida atual (incrementa a cada jogo)
+
+// imprime vetor de tamanhos de frota
+void printFleetArray(){
+  Serial.print('[');
+  for (int i=0;i<FLEET_COUNT;i++){
+    if (i) Serial.print(',');
+    Serial.print(FLEET_SIZES[i]);
+  }
+  Serial.print(']');
+}
+
+void telem_game_start(){
+  Serial.print(F("{\"type\":\"game_start\",\"gid\":")); Serial.print(gid);
+  Serial.print(F(",\"w\":")); Serial.print(W);
+  Serial.print(F(",\"h\":")); Serial.print(H);
+  Serial.print(F(",\"fleet\":")); printFleetArray();
+  Serial.print(F(",\"arduino_ms\":")); Serial.print(matchStartMs);
+  Serial.println('}');
+}
+
+void telem_place_ship(int player, int x, int y, int len, bool horiz){
+  Serial.print(F("{\"type\":\"place_ship\",\"gid\":")); Serial.print(gid);
+  Serial.print(F(",\"player\":")); Serial.print(player);
+  Serial.print(F(",\"x\":")); Serial.print(x);
+  Serial.print(F(",\"y\":")); Serial.print(y);
+  Serial.print(F(",\"len\":")); Serial.print(len);
+  Serial.print(F(",\"horiz\":")); Serial.print(horiz ? 1 : 0);
+  Serial.print(F(",\"cells\":["));
+  for (int k=0;k<len;k++){
+    int cx = horiz ? x+k : x;
+    int cy = horiz ? y   : y+k;
+    if (k) Serial.print(',');
+    Serial.print('['); Serial.print(cx); Serial.print(','); Serial.print(cy); Serial.print(']');
+  }
+  Serial.print(']');
+  Serial.print(F(",\"arduino_ms\":")); Serial.print(millis());
+  Serial.println('}');
+}
+
+void telem_shot(int attacker, int defender, int x, int y, bool hit, bool sunk, int remaining_def){
+  Serial.print(F("{\"type\":\"shot\",\"gid\":")); Serial.print(gid);
+  Serial.print(F(",\"attacker\":")); Serial.print(attacker);
+  Serial.print(F(",\"defender\":")); Serial.print(defender);
+  Serial.print(F(",\"x\":")); Serial.print(x);
+  Serial.print(F(",\"y\":")); Serial.print(y);
+  Serial.print(F(",\"hit\":")); Serial.print(hit ? 1 : 0);
+  Serial.print(F(",\"sunk\":")); Serial.print(sunk ? 1 : 0);
+  Serial.print(F(",\"remaining_defender\":")); Serial.print(remaining_def);
+  Serial.print(F(",\"arduino_ms\":")); Serial.print(millis());
+  Serial.println('}');
+}
+
+void telem_game_end(int winner){
+  unsigned long dur = millis() - matchStartMs;
+  Serial.print(F("{\"type\":\"game_end\",\"gid\":")); Serial.print(gid);
+  Serial.print(F(",\"winner\":")); Serial.print(winner);
+  Serial.print(F(",\"duration_ms\":")); Serial.print(dur);
+  Serial.print(F(",\"arduino_ms\":")); Serial.print(millis());
+  Serial.println('}');
+}
+// ---------- /TELEMETRIA ----------
+
+
 // ===== Jogo =====
 void nextStateAfterPlacement(){
   shipIndex = 0; curX=0; curY=0; horizontal=true;
@@ -381,6 +448,8 @@ void nextStateAfterPlacement(){
     LCD_MSG2(lcd2, F("Jogador 2"), F("posicione navios"));
   } else {
     state = TURN_1;
+    matchStartMs = millis();
+    telem_game_start();
     LCD_MSG2(lcd1, F("Sua vez de atirar"), F("Boa sorte!"));
     LCD_MSG2(lcd2, F("Aguarde"), F("Jogador 1 Atirar"));
   }
@@ -391,6 +460,7 @@ void tryConfirmPlacement(int myId){
   uint8_t len = FLEET_SIZES[shipIndex];
   if (canPlaceOn(myId, curX, curY, len, horizontal)) {
     placeShipOn(myId, curX, curY, len, horizontal);
+    telem_place_ship(myId, curX, curY, len, horizontal);
     remaining[myId] += len;
     shipIndex++;
     if (myId==1) dirtyP1=true; else dirtyP3=true;
@@ -446,6 +516,9 @@ void tryShootAt(int enemyId){
       // Navio de tamanho 1
       afundou = true;
     }
+    int attacker = (enemyId==2)? 1 : 2;
+    bool hit = c.ship;
+    telem_shot(attacker, enemyId, curX, curY, hit, afundou, remaining[enemyId]);
     if (afundou) {
       LCD_BOTH_MSG(F("Acertou!"), F("Afundou o navio!"));
     } else {
@@ -463,8 +536,10 @@ void tryShootAt(int enemyId){
   // Mensagem de vez do outro jogador
   if (remaining[enemyId] == 0) {
     state = GAME_OVER;
-    winnerId = (enemyId==2)? 1 : 2;   // quem atirou agora venceu
-    gameOverDrawn = false;            // vamos desenhar na próxima iteração
+    winnerId = (enemyId==2)? 1 : 2;
+    gameOverDrawn = false;
+    gid++;
+    telem_game_end(winnerId);
     return;
   }
 
