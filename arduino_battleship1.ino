@@ -1,9 +1,9 @@
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
-#include <LiquidCrystal_I2C.h>   // instale a biblioteca LiquidCrystal_I2C
+#include <LiquidCrystal_I2C.h> 
 
-LiquidCrystal_I2C lcd1(0x20, 16, 2); // troque 0x27 por 0x3F se necessário
-LiquidCrystal_I2C lcd2(0x21, 16, 2); // troque 0x27 por 0x3F se necessário
+LiquidCrystal_I2C lcd1(0x20, 16, 2);
+LiquidCrystal_I2C lcd2(0x21, 16, 2);
 
 // -------- Macros para imprimir no LCD sem gastar RAM --------
 #define LCD_MSG(L, L1) do { \
@@ -21,7 +21,7 @@ LiquidCrystal_I2C lcd2(0x21, 16, 2); // troque 0x27 por 0x3F se necessário
   LCD_MSG2(lcd2, (L1), (L2)); \
 } while(0)
 
-// printf simples (2ª linha). OBS: FMT deve ser string normal (em RAM).
+// printf simples (2ª linha)
 #define LCD_PRINTF(L, L1, FMT, VAL) do { \
   char _buf[17]; snprintf(_buf, sizeof(_buf), (FMT), (long)(VAL)); \
   (L).clear(); \
@@ -123,15 +123,36 @@ Cell (*boardPtr(int id))[W] { return (id==1 ? b1 : b2); }
 
 bool canPlaceOn(int boardId, int x, int y, int len, bool horiz) {
   Cell (*B)[W] = boardPtr(boardId);
+
   if (horiz) {
-    if (x + len > W) return false;
-    for (int i=0; i<len; i++) if (B[y][x+i].ship) return false;
+    if (x < 0 || y < 0 || x + len > W || y >= H) return false;
   } else {
-    if (y + len > H) return false;
-    for (int i=0; i<len; i++) if (B[y+i][x].ship) return false;
+    if (x < 0 || y < 0 || x >= W || y + len > H) return false;
   }
+
+  int x0, y0, x1, y1;
+  if (horiz) {
+    x0 = x - 1; y0 = y - 1;
+    x1 = x + len; y1 = y + 1;
+  } else {
+    x0 = x - 1; y0 = y - 1;
+    x1 = x + 1; y1 = y + len;
+  }
+
+  if (x0 < 0) x0 = 0;
+  if (y0 < 0) y0 = 0;
+  if (x1 > W - 1) x1 = W - 1;
+  if (y1 > H - 1) y1 = H - 1;
+
+  for (int yy = y0; yy <= y1; yy++) {
+    for (int xx = x0; xx <= x1; xx++) {
+      if (B[yy][xx].ship) return false;
+    }
+  }
+
   return true;
 }
+
 void placeShipOn(int boardId, int x, int y, int len, bool horiz) {
   Cell (*B)[W] = boardPtr(boardId);
   if (horiz) for (int i=0;i<len;i++) B[y][x+i].ship = 1;
@@ -376,13 +397,10 @@ void tryConfirmPlacement(int myId){
     if (shipIndex >= FLEET_COUNT){
       nextStateAfterPlacement();
     } else {
-      // Serial.print(F("Navio colocado. Proximo tamanho: "));
-      // Serial.println(FLEET_SIZES[shipIndex]);
       if (myId==1) LCD_PRINTF(lcd1, F("Tam. navio:"), "%d", FLEET_SIZES[shipIndex]);
       else        LCD_PRINTF(lcd2, F("Tam. navio:"), "%d", FLEET_SIZES[shipIndex]);
     }
   } else {
-    // Serial.println(F("Posicao invalida."));
     if (myId==1) LCD_MSG(lcd1, F("Posicao invalida."));
     else        LCD_MSG(lcd2, F("Posicao invalida."));
   }
@@ -397,9 +415,42 @@ void tryShootAt(int enemyId){
     return; 
   }
   c.shot = 1;
+  bool afundou = false;
   if (c.ship) { 
     c.hit = 1; remaining[enemyId]--; 
-    LCD_BOTH_MSG(F("Acertou!"), F(""));
+    // Descobre o tamanho e orientação do navio atingido
+    int x0 = curX, y0 = curY, x1 = curX, y1 = curY;
+    // Checa horizontalmente
+    while (x0 > 0 && E[y0][x0-1].ship) x0--;
+    while (x1 < W-1 && E[y0][x1+1].ship) x1++;
+    int navio_tam_h = x1 - x0 + 1;
+    // Checa verticalmente
+    int y0v = curY, y1v = curY;
+    while (y0v > 0 && E[y0v-1][curX].ship) y0v--;
+    while (y1v < H-1 && E[y1v+1][curX].ship) y1v++;
+    int navio_tam_v = y1v - y0v + 1;
+    // Decide se é horizontal, vertical ou tamanho 1
+    if (navio_tam_h > 1) {
+      // Checa se todas as partes do navio horizontal estão com hit=1
+      afundou = true;
+      for (int k = x0; k <= x1; k++) {
+        if (E[y0][k].ship && !E[y0][k].hit) { afundou = false; break; }
+      }
+    } else if (navio_tam_v > 1) {
+      // Checa se todas as partes do navio vertical estão com hit=1
+      afundou = true;
+      for (int k = y0v; k <= y1v; k++) {
+        if (E[k][curX].ship && !E[k][curX].hit) { afundou = false; break; }
+      }
+    } else {
+      // Navio de tamanho 1
+      afundou = true;
+    }
+    if (afundou) {
+      LCD_BOTH_MSG(F("Acertou!"), F("Afundou o navio!"));
+    } else {
+      LCD_BOTH_MSG(F("Acertou!"), F("Parte do navio."));
+    }
   }
   else        { 
     LCD_BOTH_MSG(F("Errou..."), F(""));
@@ -409,14 +460,27 @@ void tryShootAt(int enemyId){
   if (enemyId==2){ dirtyP2 = true; dirtyP3 = true; }  // J1 atirou no J2
   else            { dirtyP4 = true; dirtyP1 = true; }  // J2 atirou no J1
 
+  // Mensagem de vez do outro jogador
   if (remaining[enemyId] == 0) {
     state = GAME_OVER;
     winnerId = (enemyId==2)? 1 : 2;   // quem atirou agora venceu
     gameOverDrawn = false;            // vamos desenhar na próxima iteração
     return;
   }
-  if (state == TURN_1) state = TURN_2; else if (state == TURN_2) state = TURN_1;
-  if (state==TURN_1) { dirtyP2=true; } else { dirtyP4=true; }
+
+  // Aguarda um pouco para mostrar o resultado antes de trocar a vez
+  delay(1200);
+  if (state == TURN_1) {
+    LCD_MSG2(lcd1, F("Aguarde"), F("Vez do Jogador 2"));
+    LCD_MSG2(lcd2, F("Jogador 2"), F("sua vez de atirar"));
+    state = TURN_2;
+    dirtyP4 = true;
+  } else if (state == TURN_2) {
+    LCD_MSG2(lcd2, F("Aguarde"), F("Vez do Jogador 1"));
+    LCD_MSG2(lcd1, F("Jogador 1"), F("sua vez de atirar"));
+    state = TURN_1;
+    dirtyP2 = true;
+  }
 }
 
 void renderAllNow() {
