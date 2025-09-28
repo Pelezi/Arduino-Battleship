@@ -419,6 +419,8 @@ struct Btn
   const unsigned long repeatDelay = 300;
   const unsigned long repeatRate = 80;
 
+  Btn(uint8_t p) : pin(p) {}
+
   void begin()
   {
     pinMode(pin, INPUT_PULLUP);
@@ -428,7 +430,7 @@ struct Btn
   bool fellRaw()
   {
     bool now = digitalRead(pin);
-    auto t = millis();
+    unsigned long t = millis();
     if (now != last && (t - lastChange) > debounceMs)
     {
       lastChange = t;
@@ -451,7 +453,7 @@ struct Btn
       return true;
     if (isDown)
     {
-      auto t = millis();
+      unsigned long t = millis();
       if (t - pressedAt >= repeatDelay && t - lastRepeat >= repeatRate)
       {
         lastRepeat = t;
