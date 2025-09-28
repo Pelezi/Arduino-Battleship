@@ -701,6 +701,35 @@ void telem_place_ship(int player, int x, int y, int len, bool horiz)
   Serial.println('}');
 }
 
+static int calcScore(int pid, int winnerId, unsigned long durationMs) {
+  int Winner = (pid == winnerId) ? 1 : 0;
+
+  uint16_t hits = hitsBy[pid];
+  uint16_t shots = shotsBy[pid];
+  uint16_t sunkCells = sunkCellsBy[pid];
+  uint16_t sunkShips = sunkShipsBy[pid];
+
+  uint16_t accBonus = 0;
+  if (shots > 0) {
+    uint16_t num = (uint16_t)(hits * 50u);
+    accBonus = (uint16_t)((num + (shots >> 1)) / shots);
+  }
+
+  int base = 200 * Winner + 10 * hits + 5 * sunkCells + 15 * sunkShips + accBonus;
+
+  uint16_t secs = 0;
+  unsigned long ms = durationMs;
+  while (ms >= 1000UL && secs < 180u) { ms -= 1000UL; secs++; }
+
+  int timeBonus = 0;
+  if (secs < 180u) {
+    uint16_t t = secs;
+    while ((uint16_t)(t + 6u) <= 180u) { t += 6u; timeBonus++; }
+  }
+
+  return base + timeBonus;
+}
+
 void telem_shot(int attacker, int defender, int x, int y, bool hit, bool sunk, int remaining_def)
 {
   Serial.print(F("{\"type\":\"shot\",\"gid\":"));
@@ -763,24 +792,6 @@ void telem_game_end(int winner)
 
 // ---------- /TELEMETRIA ----------
 
-int calcScore(int pid, int winnerId, unsigned long durationMs)
-{
-  int Winner = (pid == winnerId) ? 1 : 0;
-  int hits = hitsBy[pid];
-  int shots = shotsBy[pid];
-  int sunkCells = sunkCellsBy[pid];
-  int sunkShips = sunkShipsBy[pid];
-
-  float acc = (shots > 0) ? (float)hits / (float)shots : 0.0f;
-  int base = 200 * Winner + 10 * hits + 5 * sunkCells + 15 * sunkShips + (int)(50.0f * acc + 0.5f);
-
-  unsigned long secs = durationMs / 1000UL;
-  int timeBonus = 0;
-  if (secs < 180UL)
-    timeBonus = (int)((180UL - secs) / 6UL); // 0..30
-
-  return base + timeBonus;
-}
 
 void resetStats()
 {
