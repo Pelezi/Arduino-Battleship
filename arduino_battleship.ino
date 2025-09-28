@@ -775,14 +775,14 @@ void telem_game_end(int winner)
 
 int calcScore(int pid, int winnerId, unsigned long durationMs)
 {
-  int W = (pid == winnerId) ? 1 : 0;
+  int Winner = (pid == winnerId) ? 1 : 0;
   int hits = hitsBy[pid];
   int shots = shotsBy[pid];
   int sunkCells = sunkCellsBy[pid];
   int sunkShips = sunkShipsBy[pid];
 
   float acc = (shots > 0) ? (float)hits / (float)shots : 0.0f;
-  int base = 200 * W + 10 * hits + 5 * sunkCells + 15 * sunkShips + (int)(50.0f * acc + 0.5f);
+  int base = 200 * Winner + 10 * hits + 5 * sunkCells + 15 * sunkShips + (int)(50.0f * acc + 0.5f);
 
   unsigned long secs = durationMs / 1000UL;
   int timeBonus = 0;
