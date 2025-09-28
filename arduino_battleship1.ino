@@ -373,6 +373,77 @@ void handleButtonsForPlayer(uint8_t player){
 }
 
 
+// ===== Nomes (máx 9 + '\0') =====
+char name1[10] = "JOGADOR 1";
+char name2[10] = "JOGADOR 2";
+
+// Helper p/ pegar nome por id (1 ou 2)
+const char* PNAME(int id){ return (id==1)? name1 : name2; }
+
+// ===== Estatísticas p/ ranking =====
+uint16_t shotsBy[3]      = {0,0,0};
+uint16_t hitsBy[3]       = {0,0,0};
+uint16_t sunkShipsBy[3]  = {0,0,0};
+uint16_t sunkCellsBy[3]  = {0,0,0}; // soma dos comprimentos dos navios afundados
+
+// UI de nomes: conjunto de caracteres aceitos
+const char CHARSET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ";
+const int  NCH = sizeof(CHARSET)-1; // sem o '\0'
+
+void enterNameForPlayer(uint8_t player, char* dest, uint8_t maxLen){
+  Btn &bUp    = (player==1)? bUp1   : bUp2;
+  Btn &bDown  = (player==1)? bDown1 : bDown2;
+  Btn &bLeft  = (player==1)? bLeft1 : bLeft2;
+  Btn &bRight = (player==1)? bRight1: bRight2;
+  Btn &bRot   = (player==1)? bRot1  : bRot2;
+  Btn &bOk    = (player==1)? bOk1   : bOk2;
+  LiquidCrystal_I2C &lcd = (player==1)? lcd1 : lcd2;
+
+  uint8_t len = 0; dest[0]='\0';
+  int idx = 0; // índice no CHARSET
+
+  // Mensagens fixas
+  char line1[17], preview[17];
+  snprintf(line1, sizeof(line1), "Nome P%d (9):", player);
+
+  while(true){
+    // linha 2: nome já digitado + '>' + char atual
+    snprintf(preview, sizeof(preview), "%s>%c", dest, CHARSET[idx]);
+    // garante que cabe em 16 colunas
+    preview[16] = '\0';
+
+    LCD_MSG2(lcd, line1, preview);
+
+    // Navega caractere
+    if (bUp.fellOrRepeat())   { idx = (idx+1)%NCH; }
+    if (bDown.fellOrRepeat()) { idx = (idx-1+NCH)%NCH; }
+
+    // Adiciona caractere (RIGHT) – respeita limite
+    if (bRight.fellOrRepeat()){
+      if (len < maxLen){
+        dest[len++] = CHARSET[idx];
+        dest[len]   = '\0';
+      }
+    }
+
+    // Backspace (LEFT ou ROTATE)
+    if (bLeft.fellOrRepeat() || bRot.fellRaw()){
+      if (len > 0){ dest[--len] = '\0'; }
+    }
+
+    // OK finaliza (se vazio, cai num default curto)
+    if (bOk.fellRaw()){
+      // trim espaço à direita
+      while(len>0 && dest[len-1]==' '){ dest[--len]='\0'; }
+      if (len==0){
+        snprintf(dest, maxLen+1, "P%d", player);
+      }
+      // upper já está, mas se quiser minúsculas, adapte aqui
+      break;
+    }
+  }
+}
+
 // ---------- TELEMETRIA ----------
 unsigned long matchStartMs = 0;
 int gid = 0; // id da partida atual (incrementa a cada jogo)
@@ -391,6 +462,8 @@ void telem_game_start(){
   Serial.print(F("{\"type\":\"game_start\",\"gid\":")); Serial.print(gid);
   Serial.print(F(",\"w\":")); Serial.print(W);
   Serial.print(F(",\"h\":")); Serial.print(H);
+  Serial.print(F(",\"p1_name\":\"")); Serial.print(name1); Serial.print(F("\""));
+  Serial.print(F(",\"p2_name\":\"")); Serial.print(name2); Serial.print(F("\""));
   Serial.print(F(",\"fleet\":")); printFleetArray();
   Serial.print(F(",\"arduino_ms\":")); Serial.print(matchStartMs);
   Serial.println('}');
@@ -430,28 +503,81 @@ void telem_shot(int attacker, int defender, int x, int y, bool hit, bool sunk, i
 
 void telem_game_end(int winner){
   unsigned long dur = millis() - matchStartMs;
+  int s1 = calcScore(1, winner, dur);
+  int s2 = calcScore(2, winner, dur);
+
   Serial.print(F("{\"type\":\"game_end\",\"gid\":")); Serial.print(gid);
   Serial.print(F(",\"winner\":")); Serial.print(winner);
   Serial.print(F(",\"duration_ms\":")); Serial.print(dur);
+  Serial.print(F(",\"p1\":{\"name\":\"")); Serial.print(name1); Serial.print(F("\","));
+  Serial.print(F("\"shots\":")); Serial.print(shotsBy[1]); Serial.print(F(","));
+  Serial.print(F("\"hits\":")); Serial.print(hitsBy[1]); Serial.print(F(","));
+  Serial.print(F("\"sunk_cells\":")); Serial.print(sunkCellsBy[1]); Serial.print(F(","));
+  Serial.print(F("\"score\":")); Serial.print(s1); Serial.print(F("},"));
+  Serial.print(F("\"p2\":{\"name\":\"")); Serial.print(name2); Serial.print(F("\","));
+  Serial.print(F("\"shots\":")); Serial.print(shotsBy[2]); Serial.print(F(","));
+  Serial.print(F("\"hits\":")); Serial.print(hitsBy[2]); Serial.print(F(","));
+  Serial.print(F("\"sunk_cells\":")); Serial.print(sunkCellsBy[2]); Serial.print(F(","));
+  Serial.print(F("\"score\":")); Serial.print(s2); Serial.print(F("}"));
   Serial.print(F(",\"arduino_ms\":")); Serial.print(millis());
   Serial.println('}');
 }
+
 // ---------- /TELEMETRIA ----------
 
+int calcScore(int pid, int winnerId, unsigned long durationMs){
+  int W = (pid==winnerId)? 1 : 0;
+  int hits = hitsBy[pid];
+  int shots = shotsBy[pid];
+  int sunkCells = sunkCellsBy[pid];
+  int sunkShips = sunkShipsBy[pid];
+
+  float acc = (shots>0)? (float)hits / (float)shots : 0.0f;
+  int base = 200*W + 10*hits + 5*sunkCells + 15*sunkShips + (int)(50.0f*acc + 0.5f);
+
+  unsigned long secs = durationMs/1000UL;
+  int timeBonus = 0;
+  if (secs < 180UL) timeBonus = (int)((180UL - secs)/6UL); // 0..30
+
+  return base + timeBonus;
+}
+
+
+void resetStats(){
+  shotsBy[1]=shotsBy[2]=0;
+  hitsBy[1]=hitsBy[2]=0;
+  sunkShipsBy[1]=sunkShipsBy[2]=0;
+  sunkCellsBy[1]=sunkCellsBy[2]=0;
+}
+
+void showTurnPrompt(){
+  char buf[17];
+  if (state==TURN_1){
+    LCD_MSG2(lcd1, F("Sua vez: atirar"), F("Boa sorte!"));
+    snprintf(buf,sizeof(buf),"Vez: %s", PNAME(1));  // "Vez: " + 9 = <=14
+    LCD_MSG2(lcd2, F("Aguarde"), buf);
+  } else if (state==TURN_2){
+    LCD_MSG2(lcd2, F("Sua vez: atirar"), F("Boa sorte!"));
+    snprintf(buf,sizeof(buf),"Vez: %s", PNAME(2));
+    LCD_MSG2(lcd1, F("Aguarde"), buf);
+  }
+}
 
 // ===== Jogo =====
 void nextStateAfterPlacement(){
   shipIndex = 0; curX=0; curY=0; horizontal=true;
   if (state == PLACE_1) {
     state = PLACE_2;
-    LCD_MSG2(lcd1, F("Aguarde"), F("Vez do Jogador 2"));
-    LCD_MSG2(lcd2, F("Jogador 2"), F("posicione navios"));
+    char buf[17];
+    snprintf(buf,sizeof(buf),"Vez: %s", name2);
+    LCD_MSG2(lcd1, F("Aguarde"), buf);
+    LCD_MSG2(lcd2, name2, F("posicione navios"));
   } else {
     state = TURN_1;
+    resetStats();
     matchStartMs = millis();
     telem_game_start();
-    LCD_MSG2(lcd1, F("Sua vez de atirar"), F("Boa sorte!"));
-    LCD_MSG2(lcd2, F("Aguarde"), F("Jogador 1 Atirar"));
+    showTurnPrompt();
   }
   markAllDirty();
 }
@@ -485,9 +611,13 @@ void tryShootAt(int enemyId){
     return; 
   }
   c.shot = 1;
+  int attacker = (enemyId==2)? 1 : 2;
+  shotsBy[attacker]++;
   bool afundou = false;
   if (c.ship) { 
-    c.hit = 1; remaining[enemyId]--; 
+    c.hit = 1; 
+    remaining[enemyId]--; 
+    hitsBy[attacker]++;
     // Descobre o tamanho e orientação do navio atingido
     int x0 = curX, y0 = curY, x1 = curX, y1 = curY;
     // Checa horizontalmente
@@ -516,16 +646,24 @@ void tryShootAt(int enemyId){
       // Navio de tamanho 1
       afundou = true;
     }
-    int attacker = (enemyId==2)? 1 : 2;
-    bool hit = c.ship;
-    telem_shot(attacker, enemyId, curX, curY, hit, afundou, remaining[enemyId]);
+    int ship_len = 1;
+    if (navio_tam_h > 1) ship_len = navio_tam_h;
+    else if (navio_tam_v > 1) ship_len = navio_tam_v;
+
+    if (afundou) {
+      sunkShipsBy[attacker]++;
+      sunkCellsBy[attacker] += ship_len;
+    }
+    
+    telem_shot(attacker, enemyId, curX, curY, /*hit=*/true, afundou, remaining[enemyId]);
     if (afundou) {
       LCD_BOTH_MSG(F("Acertou!"), F("Afundou o navio!"));
     } else {
       LCD_BOTH_MSG(F("Acertou!"), F("Parte do navio."));
     }
   }
-  else        { 
+  else {
+    telem_shot(attacker, enemyId, curX, curY, /*hit=*/false, /*sunk=*/false, remaining[enemyId]);
     LCD_BOTH_MSG(F("Errou..."), F(""));
   }
 
@@ -538,7 +676,6 @@ void tryShootAt(int enemyId){
     state = GAME_OVER;
     winnerId = (enemyId==2)? 1 : 2;
     gameOverDrawn = false;
-    gid++;
     telem_game_end(winnerId);
     return;
   }
@@ -546,16 +683,13 @@ void tryShootAt(int enemyId){
   // Aguarda um pouco para mostrar o resultado antes de trocar a vez
   delay(1200);
   if (state == TURN_1) {
-    LCD_MSG2(lcd1, F("Aguarde"), F("Vez do Jogador 2"));
-    LCD_MSG2(lcd2, F("Jogador 2"), F("sua vez de atirar"));
     state = TURN_2;
     dirtyP4 = true;
   } else if (state == TURN_2) {
-    LCD_MSG2(lcd2, F("Aguarde"), F("Vez do Jogador 1"));
-    LCD_MSG2(lcd1, F("Jogador 1"), F("sua vez de atirar"));
     state = TURN_1;
     dirtyP2 = true;
   }
+  showTurnPrompt();
 }
 
 void renderAllNow() {
@@ -623,8 +757,26 @@ void setup() {
 
   LCD_BOTH_MSG(F("Pronto!"), F("")); 
   delay(300);
-  LCD_MSG2(lcd1, F("Jogador 1"), F("posicione navios"));
-  LCD_MSG2(lcd2, F("Aguarde"),   F("Vez do Jogador 1"));
+
+  // 1) Nome do Jogador 1
+  LCD_MSG2(lcd1, F("Escolha seu"), F("nome (OK p/ fim)"));
+  LCD_MSG2(lcd2, F("Aguarde..."),  F(""));
+  enterNameForPlayer(1, name1, 9);
+
+  // 2) Nome do Jogador 2
+  LCD_MSG2(lcd2, F("Escolha seu"), F("nome (OK p/ fim)"));
+  LCD_MSG2(lcd1, F("Aguarde..."),  F(""));
+  enterNameForPlayer(2, name2, 9);
+
+  gid++;
+
+  // Mensagens iniciais já com nomes
+  LCD_MSG2(lcd1, name1, F("posicione navios"));
+  char turnbuf[17];
+  snprintf(turnbuf,sizeof(turnbuf),"Vez: %s", name1);
+  LCD_MSG2(lcd2, F("Aguarde"), turnbuf);
+
+  delay(1500);
 
   LCD_PRINTF(lcd1, F("Tam. navio:"), "%d", FLEET_SIZES[0]);
 
@@ -639,7 +791,9 @@ void loop() {
     if (!gameOverDrawn) {
       renderGameOverNow();
       gameOverDrawn = true;
-      LCD_BOTH_PRINTF(F("GAME OVER!"), "Jogador %d venceu", winnerId);
+      char buf[17];
+      snprintf(buf, sizeof(buf), "%s venceu", PNAME(winnerId));
+      LCD_BOTH_MSG(F("GAME OVER!"), buf);
     }
     return;
   }
