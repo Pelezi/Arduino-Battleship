@@ -1,6 +1,11 @@
 #include <Adafruit_NeoPixel.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <avr/pgmspace.h>
+
+#ifndef FPSTR
+#define FPSTR(p) (reinterpret_cast<const __FlashStringHelper *>(p))
+#endif
 
 LiquidCrystal_I2C lcd1(0x20, 16, 2);
 LiquidCrystal_I2C lcd2(0x21, 16, 2);
@@ -32,16 +37,16 @@ LiquidCrystal_I2C lcd2(0x21, 16, 2);
   } while (0)
 
 // printf simples (2ª linha)
-#define LCD_PRINTF(L, L1, FMT, VAL)                   \
-  do                                                  \
-  {                                                   \
-    char _buf[17];                                    \
-    snprintf(_buf, sizeof(_buf), (FMT), (long)(VAL)); \
-    (L).clear();                                      \
-    (L).setCursor(0, 0);                              \
-    (L).print(L1);                                    \
-    (L).setCursor(0, 1);                              \
-    (L).print(_buf);                                  \
+#define LCD_PRINTF(L, L1, FMT, VAL)             \
+  do                                            \
+  {                                             \
+    char _buf[17];                              \
+    snprintf(_buf, sizeof(_buf), (FMT), (VAL)); \
+    (L).clear();                                \
+    (L).setCursor(0, 0);                        \
+    (L).print(L1);                              \
+    (L).setCursor(0, 1);                        \
+    (L).print(_buf);                            \
   } while (0)
 
 #define LCD_BOTH_PRINTF(L1, FMT, VAL)     \
@@ -75,6 +80,8 @@ Adafruit_NeoPixel p2(W *H, PIN_P2, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel p3(W *H, PIN_P3, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel p4(W *H, PIN_P4, NEO_GRB + NEO_KHZ800);
 
+Adafruit_NeoPixel *P[5] = {nullptr, &p1, &p2, &p3, &p4};
+
 // Paleta
 #define C(r, g, b) p1.Color((r), (g), (b))
 #define COL_WATER1 C(0, 0, 12)   // Azul
@@ -86,6 +93,29 @@ Adafruit_NeoPixel p4(W *H, PIN_P4, NEO_GRB + NEO_KHZ800);
 #define COL_GHOST C(200, 200, 0) // Amarelo
 #define COL_WIN C(0, 160, 0)     // Verde
 #define COL_LOSE C(200, 0, 0)    // Vermelho
+
+// ===== Dicionario =====
+const char MSG_WAIT[] PROGMEM = "Aguarde";
+const char MSG_FIRE[] PROGMEM = "Atire!";
+const char MSG_GOODLUCK[] PROGMEM = "Boa Sorte!";
+const char MSG_P1_TURN[] PROGMEM = "Vez: Jogador 1";
+const char MSG_P2_TURN[] PROGMEM = "Vez: Jogador 2";
+const char MSG_P1_SHOOT[] PROGMEM = "Jogador 1";
+const char MSG_P2_SHOOT[] PROGMEM = "Jogador 2";
+
+static inline void showTurn(uint8_t pid)
+{
+  if (pid == 1)
+  {
+    LCD_MSG2(lcd1, FPSTR(MSG_FIRE), FPSTR(MSG_GOODLUCK));
+    LCD_MSG2(lcd2, FPSTR(MSG_WAIT), FPSTR(MSG_P1_TURN));
+  }
+  else
+  {
+    LCD_MSG2(lcd2, FPSTR(MSG_FIRE), FPSTR(MSG_GOODLUCK));
+    LCD_MSG2(lcd1, FPSTR(MSG_WAIT), FPSTR(MSG_P2_TURN));
+  }
+}
 
 // ===== Tabuleiros =====
 struct Cell
@@ -122,45 +152,22 @@ bool dirtyP1 = true, dirtyP2 = true, dirtyP3 = true, dirtyP4 = true;
 unsigned long nextFrameAt = 0;
 
 // ===== Utils =====
-uint16_t idxXY(uint8_t x, uint8_t y)
+static inline uint16_t idxXY(uint8_t x, uint8_t y)
 {
   if (SERPENTINE)
-    return (y % 2 == 0) ? y * W + x : y * W + (W - 1 - x);
-  return y * W + x;
+    return (y & 1) ? y * W + (W - 1 - x) : y * W + x;
+  return (uint16_t)y * W + x;
 }
-void setXY_on(uint8_t panel, uint8_t x, uint8_t y, uint32_t col)
+static inline void setXY_on(uint8_t panel, uint8_t x, uint8_t y, uint32_t col)
 {
-  uint16_t i = idxXY(x, y);
-  if (panel == 1)
-    p1.setPixelColor(i, col);
-  else if (panel == 2)
-    p2.setPixelColor(i, col);
-  else if (panel == 3)
-    p3.setPixelColor(i, col);
-  else if (panel == 4)
-    p4.setPixelColor(i, col);
+  P[panel]->setPixelColor(idxXY(x, y), col);
 }
-void clear_on(uint8_t panel)
+static inline void clear_on(uint8_t panel) { P[panel]->clear(); }
+static inline void show_on(uint8_t panel) { P[panel]->show(); }
+static inline void fillPanel(uint8_t panel, uint32_t color)
 {
-  if (panel == 1)
-    p1.clear();
-  else if (panel == 2)
-    p2.clear();
-  else if (panel == 3)
-    p3.clear();
-  else if (panel == 4)
-    p4.clear();
-}
-void show_on(uint8_t panel)
-{
-  if (panel == 1)
-    p1.show();
-  else if (panel == 2)
-    p2.show();
-  else if (panel == 3)
-    p3.show();
-  else if (panel == 4)
-    p4.show();
+  P[panel]->fill(color);
+  P[panel]->show();
 }
 void markAllDirty() { dirtyP1 = dirtyP2 = dirtyP3 = dirtyP4 = true; }
 
@@ -289,19 +296,6 @@ void drawGhost(uint8_t panel, uint8_t x, uint8_t y, uint8_t len, bool horiz)
   }
 }
 void drawCursor(uint8_t panel, uint8_t x, uint8_t y) { setXY_on(panel, x, y, COL_CURSOR); }
-
-void fillPanel(uint8_t panel, uint32_t color)
-{
-  if (panel == 1)
-    p1.fill(color);
-  else if (panel == 2)
-    p2.fill(color);
-  else if (panel == 3)
-    p3.fill(color);
-  else if (panel == 4)
-    p4.fill(color);
-  show_on(panel);
-}
 
 // ===== Render condicional (só se “dirty” e respeitando FRAME_MS) =====
 void renderIfDirty()
@@ -568,65 +562,81 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
 
   uint8_t len = 0;
   dest[0] = '\0';
-  int idx = 0; // índice no CHARSET
+  int idx = 0;
 
-  // Mensagens fixas
-  char line1[17], preview[17];
-  snprintf(line1, sizeof(line1), "Nome P%d (9):", player);
+  bool first = true;
+
+  auto drawName = [&]()
+  {
+    if (first)
+    {
+      first = false;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(F("Nome P"));
+      lcd.print((int)player);
+      lcd.print(F(" (9):"));
+    }
+
+    lcd.setCursor(0, 1);
+    lcd.print(dest);
+    lcd.print('>');
+    lcd.print(CHARSET[idx]);
+
+    int used = (int)strlen(dest) + 2;
+    for (int i = used; i < 16; ++i)
+      lcd.print(' ');
+  };
+
+  drawName();
 
   while (true)
   {
-    // linha 2: nome já digitado + '>' + char atual
-    snprintf(preview, sizeof(preview), "%s>%c", dest, CHARSET[idx]);
-    // garante que cabe em 16 colunas
-    preview[16] = '\0';
+    bool changed = false;
 
-    LCD_MSG2(lcd, line1, preview);
-
-    // Navega caractere
     if (bUp.fellOrRepeat())
     {
       idx = (idx + 1) % NCH;
+      changed = true;
     }
     if (bDown.fellOrRepeat())
     {
       idx = (idx - 1 + NCH) % NCH;
+      changed = true;
     }
 
-    // Adiciona caractere (RIGHT) – respeita limite
-    if (bRight.fellOrRepeat())
+    if (bRight.fellOrRepeat() && len < maxLen)
     {
-      if (len < maxLen)
-      {
-        dest[len++] = CHARSET[idx];
-        dest[len] = '\0';
-      }
+      dest[len++] = CHARSET[idx];
+      dest[len] = '\0';
+      changed = true;
     }
 
-    // Backspace (LEFT ou ROTATE)
     if (bLeft.fellOrRepeat() || bRot.fellRaw())
     {
       if (len > 0)
       {
         dest[--len] = '\0';
+        changed = true;
       }
     }
 
-    // OK finaliza (se vazio, cai num default curto)
     if (bOk.fellRaw())
     {
-      // trim espaço à direita
       while (len > 0 && dest[len - 1] == ' ')
-      {
-        dest[--len] = '\0';
-      }
+        dest[--len] = '\0'; // trim
       if (len == 0)
       {
-        snprintf(dest, maxLen + 1, "P%d", player);
+        dest[0] = 'P';
+        dest[1] = (player == 1) ? '1' : '2';
+        dest[2] = '\0';
       }
-      // upper já está, mas se quiser minúsculas, adapte aqui
       break;
     }
+
+    if (changed)
+      drawName();
+    delay(20);
   }
 }
 
@@ -634,164 +644,139 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
 unsigned long matchStartMs = 0;
 int gid = 0; // id da partida atual (incrementa a cada jogo)
 
-// imprime vetor de tamanhos de frota
-void printFleetArray()
+static void telem_game_start()
 {
-  Serial.print('[');
-  for (int i = 0; i < FLEET_COUNT; i++)
-  {
-    if (i)
-      Serial.print(',');
-    Serial.print(FLEET_SIZES[i]);
-  }
-  Serial.print(']');
-}
-
-void telem_game_start()
-{
-  Serial.print(F("{\"type\":\"game_start\",\"gid\":"));
+  Serial.print(F("GS,"));
   Serial.print(gid);
-  Serial.print(F(",\"w\":"));
+  Serial.print(',');
   Serial.print(W);
-  Serial.print(F(",\"h\":"));
+  Serial.print('x');
   Serial.print(H);
-  Serial.print(F(",\"p1_name\":\""));
-  Serial.print(name1);
-  Serial.print(F("\""));
-  Serial.print(F(",\"p2_name\":\""));
-  Serial.print(name2);
-  Serial.print(F("\""));
-  Serial.print(F(",\"fleet\":"));
-  printFleetArray();
-  Serial.print(F(",\"arduino_ms\":"));
-  Serial.print(matchStartMs);
-  Serial.println('}');
+  Serial.print(',');
+  Serial.println(matchStartMs);
 }
 
-void telem_place_ship(int player, int x, int y, int len, bool horiz)
+static void telem_place_ship(int player, int x, int y, int len, bool horiz)
 {
-  Serial.print(F("{\"type\":\"place_ship\",\"gid\":"));
+  Serial.print(F("PS,"));
   Serial.print(gid);
-  Serial.print(F(",\"player\":"));
+  Serial.print(',');
   Serial.print(player);
-  Serial.print(F(",\"x\":"));
+  Serial.print(',');
   Serial.print(x);
-  Serial.print(F(",\"y\":"));
+  Serial.print(',');
   Serial.print(y);
-  Serial.print(F(",\"len\":"));
+  Serial.print(',');
   Serial.print(len);
-  Serial.print(F(",\"horiz\":"));
+  Serial.print(',');
   Serial.print(horiz ? 1 : 0);
-  Serial.print(F(",\"cells\":["));
-  for (int k = 0; k < len; k++)
-  {
-    int cx = horiz ? x + k : x;
-    int cy = horiz ? y : y + k;
-    if (k)
-      Serial.print(',');
-    Serial.print('[');
-    Serial.print(cx);
-    Serial.print(',');
-    Serial.print(cy);
-    Serial.print(']');
-  }
-  Serial.print(']');
-  Serial.print(F(",\"arduino_ms\":"));
-  Serial.print(millis());
-  Serial.println('}');
+  Serial.print(',');
+  Serial.println(millis());
 }
 
-static int calcScore(int pid, int winnerId, unsigned long durationMs) {
-  int Winner = (pid == winnerId) ? 1 : 0;
-
+static int calcScore(int pid, int winnerId, unsigned long durationMs)
+{
+  int win = (pid == winnerId) ? 1 : 0;
   uint16_t hits = hitsBy[pid];
   uint16_t shots = shotsBy[pid];
   uint16_t sunkCells = sunkCellsBy[pid];
   uint16_t sunkShips = sunkShipsBy[pid];
 
   uint16_t accBonus = 0;
-  if (shots > 0) {
+  if (shots > 0)
+  {
     uint16_t num = (uint16_t)(hits * 50u);
     accBonus = (uint16_t)((num + (shots >> 1)) / shots);
   }
 
-  int base = 200 * Winner + 10 * hits + 5 * sunkCells + 15 * sunkShips + accBonus;
+  int base = 200 * win + 10 * hits + 5 * sunkCells + 15 * sunkShips + accBonus;
 
   uint16_t secs = 0;
   unsigned long ms = durationMs;
-  while (ms >= 1000UL && secs < 180u) { ms -= 1000UL; secs++; }
+  while (ms >= 1000UL && secs < 180u)
+  {
+    ms -= 1000UL;
+    secs++;
+  }
 
   int timeBonus = 0;
-  if (secs < 180u) {
+  if (secs < 180u)
+  {
     uint16_t t = secs;
-    while ((uint16_t)(t + 6u) <= 180u) { t += 6u; timeBonus++; }
+    while ((uint16_t)(t + 6u) <= 180u)
+    {
+      t += 6u;
+      timeBonus++;
+    }
   }
 
   return base + timeBonus;
 }
 
-void telem_shot(int attacker, int defender, int x, int y, bool hit, bool sunk, int remaining_def)
+static void telem_shot(int attacker, int defender, int x, int y, bool hit, bool sunk, int remaining_def)
 {
-  Serial.print(F("{\"type\":\"shot\",\"gid\":"));
+  Serial.print(F("SH,"));
   Serial.print(gid);
-  Serial.print(F(",\"attacker\":"));
+  Serial.print(',');
   Serial.print(attacker);
-  Serial.print(F(",\"defender\":"));
+  Serial.print(',');
   Serial.print(defender);
-  Serial.print(F(",\"x\":"));
+  Serial.print(',');
   Serial.print(x);
-  Serial.print(F(",\"y\":"));
+  Serial.print(',');
   Serial.print(y);
-  Serial.print(F(",\"hit\":"));
+  Serial.print(',');
   Serial.print(hit ? 1 : 0);
-  Serial.print(F(",\"sunk\":"));
+  Serial.print(',');
   Serial.print(sunk ? 1 : 0);
-  Serial.print(F(",\"remaining_defender\":"));
+  Serial.print(',');
   Serial.print(remaining_def);
-  Serial.print(F(",\"arduino_ms\":"));
-  Serial.print(millis());
-  Serial.println('}');
+  Serial.print(',');
+  Serial.println(millis());
 }
 
-void telem_game_end(int winner)
+static void telem_game_end(int winner)
 {
   unsigned long dur = millis() - matchStartMs;
   int s1 = calcScore(1, winner, dur);
   int s2 = calcScore(2, winner, dur);
 
-  Serial.print(F("{\"type\":\"game_end\",\"gid\":"));
+  Serial.print(F("GE,")); // game end
   Serial.print(gid);
-  Serial.print(F(",\"winner\":"));
+  Serial.print(',');
   Serial.print(winner);
-  Serial.print(F(",\"duration_ms\":"));
+  Serial.print(',');
   Serial.print(dur);
-  Serial.print(F(",\"p1\":{\"name\":\""));
+  Serial.print(',');
+
+  // P1: name,shots,hits,sunkCells,score
   Serial.print(name1);
-  Serial.print(F("\",\"shots\":"));
+  Serial.print(',');
   Serial.print(shotsBy[1]);
-  Serial.print(F(",\"hits\":"));
+  Serial.print(',');
   Serial.print(hitsBy[1]);
-  Serial.print(F(",\"sunk_cells\":"));
+  Serial.print(',');
   Serial.print(sunkCellsBy[1]);
-  Serial.print(F(",\"score\":"));
+  Serial.print(',');
   Serial.print(s1);
-  Serial.print(F("},\"p2\":{\"name\":\""));
+  Serial.print(',');
+
+  // P2
   Serial.print(name2);
-  Serial.print(F("\",\"shots\":"));
+  Serial.print(',');
   Serial.print(shotsBy[2]);
-  Serial.print(F(",\"hits\":"));
+  Serial.print(',');
   Serial.print(hitsBy[2]);
-  Serial.print(F(",\"sunk_cells\":"));
+  Serial.print(',');
   Serial.print(sunkCellsBy[2]);
-  Serial.print(F(",\"score\":"));
+  Serial.print(',');
   Serial.print(s2);
-  Serial.print(F("},\"arduino_ms\":"));
-  Serial.print(millis());
-  Serial.println('}');
+  Serial.print(',');
+
+  Serial.println(millis());
 }
 
 // ---------- /TELEMETRIA ----------
-
 
 void resetStats()
 {
@@ -799,23 +784,6 @@ void resetStats()
   hitsBy[1] = hitsBy[2] = 0;
   sunkShipsBy[1] = sunkShipsBy[2] = 0;
   sunkCellsBy[1] = sunkCellsBy[2] = 0;
-}
-
-void showTurnPrompt()
-{
-  char buf[17];
-  if (state == TURN_1)
-  {
-    LCD_MSG2(lcd1, F("Sua vez: atirar"), F("Boa sorte!"));
-    snprintf(buf, sizeof(buf), "Vez: %s", PNAME(1)); // "Vez: " + 9 = <=14
-    LCD_MSG2(lcd2, F("Aguarde"), buf);
-  }
-  else if (state == TURN_2)
-  {
-    LCD_MSG2(lcd2, F("Sua vez: atirar"), F("Boa sorte!"));
-    snprintf(buf, sizeof(buf), "Vez: %s", PNAME(2));
-    LCD_MSG2(lcd1, F("Aguarde"), buf);
-  }
 }
 
 // ===== Jogo =====
@@ -828,10 +796,8 @@ void nextStateAfterPlacement()
   if (state == PLACE_1)
   {
     state = PLACE_2;
-    char buf[17];
-    snprintf(buf, sizeof(buf), "Vez: %s", name2);
-    LCD_MSG2(lcd1, F("Aguarde"), buf);
-    LCD_MSG2(lcd2, name2, F("posicione navios"));
+    LCD_MSG2(lcd1, F("Aguarde"), F("Vez: Jogador 2"));
+    LCD_MSG2(lcd2, F("Jogador 2:"), F("posicione navios"));
   }
   else
   {
@@ -839,7 +805,7 @@ void nextStateAfterPlacement()
     resetStats();
     matchStartMs = millis();
     telem_game_start();
-    showTurnPrompt();
+    showTurn(1);
   }
   markAllDirty();
 }
@@ -860,13 +826,6 @@ void tryConfirmPlacement(int myId)
     if (shipIndex >= FLEET_COUNT)
     {
       nextStateAfterPlacement();
-    }
-    else
-    {
-      if (myId == 1)
-        LCD_PRINTF(lcd1, F("Tam. navio:"), "%d", FLEET_SIZES[shipIndex]);
-      else
-        LCD_PRINTF(lcd2, F("Tam. navio:"), "%d", FLEET_SIZES[shipIndex]);
     }
   }
   else
@@ -957,8 +916,7 @@ void tryShootAt(int enemyId)
       sunkShipsBy[attacker]++;
       sunkCellsBy[attacker] += ship_len;
     }
-
-    telem_shot(attacker, enemyId, curX, curY, /*hit=*/true, afundou, remaining[enemyId]);
+    telem_shot(attacker, enemyId, curX, curY, true, afundou, remaining[enemyId]);
     if (afundou)
     {
       LCD_BOTH_MSG(F("Acertou!"), F("Afundou o navio!"));
@@ -1000,15 +958,16 @@ void tryShootAt(int enemyId)
   delay(1200);
   if (state == TURN_1)
   {
+    showTurn(2);
     state = TURN_2;
     dirtyP4 = true;
   }
   else if (state == TURN_2)
   {
+    showTurn(1);
     state = TURN_1;
     dirtyP2 = true;
   }
-  showTurnPrompt();
 }
 
 void renderAllNow()
@@ -1103,15 +1062,9 @@ void setup()
 
   gid++;
 
-  // Mensagens iniciais já com nomes
-  LCD_MSG2(lcd1, name1, F("posicione navios"));
-  char turnbuf[17];
-  snprintf(turnbuf, sizeof(turnbuf), "Vez: %s", name1);
-  LCD_MSG2(lcd2, F("Aguarde"), turnbuf);
-
+  LCD_MSG2(lcd1, F("Jogador 1:"), F("posicione navios"));
+  LCD_MSG2(lcd2, F("Aguarde"), F("Vez: Jogador 1"));
   delay(1500);
-
-  LCD_PRINTF(lcd1, F("Tam. navio:"), "%d", FLEET_SIZES[0]);
 
   markAllDirty();
 }
@@ -1129,9 +1082,14 @@ void loop()
     {
       renderGameOverNow();
       gameOverDrawn = true;
-      char buf[17];
-      snprintf(buf, sizeof(buf), "%s venceu", PNAME(winnerId));
-      LCD_BOTH_MSG(F("GAME OVER!"), buf);
+      if (winnerId == 1)
+      {
+        LCD_BOTH_MSG(F("GAME OVER!"), F("Jogador 1 venceu"));
+      }
+      else
+      {
+        LCD_BOTH_MSG(F("GAME OVER!"), F("Jogador 2 venceu"));
+      }
     }
     return;
   }
