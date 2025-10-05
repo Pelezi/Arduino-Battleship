@@ -426,7 +426,7 @@ void renderGameOverNow()
 
 // ================== SFX ==================
 
-const uint8_t BUZZER_PIN = 7;
+const uint8_t BUZZER_PIN = 6;
 
 // Notas (Hz)
 const uint16_t C4 = 262;
@@ -460,40 +460,6 @@ inline void beep(uint16_t freq, uint16_t durMs, uint16_t gapMs = 25)
     delay(gapMs);
 }
 
-// Sweep linear
-void sweep(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t steps = 28)
-{
-  if (steps < 2)
-    steps = 2;
-  int32_t span = (int32_t)endHz - (int32_t)startHz;
-  uint16_t slice = totalMs / steps;
-  for (uint8_t i = 0; i < steps; i++)
-  {
-    uint16_t f = startHz + (span * i) / (steps - 1);
-    tone(BUZZER_PIN, f, slice);
-    delay(slice);
-  }
-  noTone(BUZZER_PIN);
-}
-
-// Sweep com "ease-out" (mais orgânico)
-void sweepEaseOut(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t steps = 32)
-{
-  if (steps < 2)
-    steps = 2;
-  float span = (float)endHz - (float)startHz;
-  uint16_t slice = totalMs / steps;
-  for (uint8_t i = 0; i < steps; i++)
-  {
-    float t = (float)i / (float)(steps - 1);  // 0..1
-    float p = 1.0f - (1.0f - t) * (1.0f - t); // easeOutQuad
-    uint16_t f = (uint16_t)(startHz + span * p);
-    tone(BUZZER_PIN, f, slice);
-    delay(slice);
-  }
-  noTone(BUZZER_PIN);
-}
-
 // "Spray" com jitter (para o MISS)
 void splashSpray(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t stepMs = 8)
 {
@@ -508,25 +474,6 @@ void splashSpray(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t ste
     int jitterRange = (int)(60 * (1.0f - prog)) + 10; // 70->10
     int jitter = random(-jitterRange, jitterRange);
     int f = (int)target + jitter;
-    if (f < 80)
-      f = 80;
-    tone(BUZZER_PIN, (unsigned int)f, stepMs);
-    delay(stepMs);
-  }
-  noTone(BUZZER_PIN);
-}
-
-// Vibrato simples
-void vibrato(uint16_t centerHz, uint16_t depthHz, uint16_t totalMs, float rateHz, uint8_t stepMs = 6)
-{
-  uint32_t t0 = millis();
-  while (true)
-  {
-    uint32_t elapsed = millis() - t0;
-    if (elapsed >= totalMs)
-      break;
-    float phase = 2.0f * PI * rateHz * (elapsed / 1000.0f);
-    float f = centerHz + depthHz * sinf(phase);
     if (f < 80)
       f = 80;
     tone(BUZZER_PIN, (unsigned int)f, stepMs);
@@ -616,14 +563,15 @@ struct Btn
 {
   uint8_t pin;
   bool last = HIGH;
-  unsigned long lastChange = 0;
-  const unsigned long debounceMs = 25;
+  uint32_t lastChange = 0;
 
   // repeat
   bool isDown = false;
-  unsigned long pressedAt = 0, lastRepeat = 0;
-  const unsigned long repeatDelay = 300;
-  const unsigned long repeatRate = 80;
+  uint32_t pressedAt = 0, lastRepeat = 0;
+
+  static constexpr uint16_t debounceMs = 25;
+  static constexpr uint16_t repeatDelay = 300;
+  static constexpr uint16_t repeatRate = 80;
 
   Btn(uint8_t p) : pin(p) {}
 
@@ -635,8 +583,8 @@ struct Btn
 
   bool fellRaw()
   {
+    uint32_t t = millis();
     bool now = digitalRead(pin);
-    unsigned long t = millis();
     if (now != last && (t - lastChange) > debounceMs)
     {
       lastChange = t;
@@ -644,8 +592,7 @@ struct Btn
       if (now == LOW)
       {
         isDown = true;
-        pressedAt = t;
-        lastRepeat = t;
+        pressedAt = lastRepeat = t;
         return true;
       }
       isDown = false;
@@ -659,7 +606,7 @@ struct Btn
       return true;
     if (isDown)
     {
-      unsigned long t = millis();
+      uint32_t t = millis();
       if (t - pressedAt >= repeatDelay && t - lastRepeat >= repeatRate)
       {
         lastRepeat = t;
