@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <avr/pgmspace.h>
+#include <math.h>
 
 #ifndef FPSTR
 #define FPSTR(p) (reinterpret_cast<const __FlashStringHelper *>(p))
@@ -423,6 +424,177 @@ void renderGameOverNow()
   fillPanel(panelLoserAtk, COL_LOSE);
 }
 
+// ================== SFX ==================
+
+const uint8_t BUZZER_PIN = 7;
+
+// Notas (Hz)
+const uint16_t C4 = 262;
+const uint16_t D4 = 294;
+const uint16_t E4 = 330;
+const uint16_t F4 = 349;
+const uint16_t G4 = 392;
+const uint16_t LA4 = 440;
+const uint16_t B4 = 494;
+
+const uint16_t C5 = 523;
+const uint16_t D5 = 587;
+const uint16_t E5 = 659;
+const uint16_t F5 = 698;
+const uint16_t G5 = 784;
+const uint16_t LA5 = 880;
+const uint16_t B5 = 988;
+
+const uint16_t C6 = 1047;
+
+// ================== Helpers ==================
+inline void beep(uint16_t freq, uint16_t durMs, uint16_t gapMs = 25)
+{
+  if (freq > 0 && durMs > 0)
+  {
+    tone(BUZZER_PIN, freq, durMs);
+    delay(durMs);
+    noTone(BUZZER_PIN);
+  }
+  if (gapMs)
+    delay(gapMs);
+}
+
+// Sweep linear
+void sweep(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t steps = 28)
+{
+  if (steps < 2)
+    steps = 2;
+  int32_t span = (int32_t)endHz - (int32_t)startHz;
+  uint16_t slice = totalMs / steps;
+  for (uint8_t i = 0; i < steps; i++)
+  {
+    uint16_t f = startHz + (span * i) / (steps - 1);
+    tone(BUZZER_PIN, f, slice);
+    delay(slice);
+  }
+  noTone(BUZZER_PIN);
+}
+
+// Sweep com "ease-out" (mais orgânico)
+void sweepEaseOut(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t steps = 32)
+{
+  if (steps < 2)
+    steps = 2;
+  float span = (float)endHz - (float)startHz;
+  uint16_t slice = totalMs / steps;
+  for (uint8_t i = 0; i < steps; i++)
+  {
+    float t = (float)i / (float)(steps - 1);  // 0..1
+    float p = 1.0f - (1.0f - t) * (1.0f - t); // easeOutQuad
+    uint16_t f = (uint16_t)(startHz + span * p);
+    tone(BUZZER_PIN, f, slice);
+    delay(slice);
+  }
+  noTone(BUZZER_PIN);
+}
+
+// "Spray" com jitter (para o MISS)
+void splashSpray(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t stepMs = 8)
+{
+  uint32_t t0 = millis();
+  while (true)
+  {
+    uint32_t t = millis() - t0;
+    if (t >= totalMs)
+      break;
+    float prog = (float)t / (float)totalMs; // 0..1
+    float target = startHz + (endHz - startHz) * prog;
+    int jitterRange = (int)(60 * (1.0f - prog)) + 10; // 70->10
+    int jitter = random(-jitterRange, jitterRange);
+    int f = (int)target + jitter;
+    if (f < 80)
+      f = 80;
+    tone(BUZZER_PIN, (unsigned int)f, stepMs);
+    delay(stepMs);
+  }
+  noTone(BUZZER_PIN);
+}
+
+// Vibrato simples
+void vibrato(uint16_t centerHz, uint16_t depthHz, uint16_t totalMs, float rateHz, uint8_t stepMs = 6)
+{
+  uint32_t t0 = millis();
+  while (true)
+  {
+    uint32_t elapsed = millis() - t0;
+    if (elapsed >= totalMs)
+      break;
+    float phase = 2.0f * PI * rateHz * (elapsed / 1000.0f);
+    float f = centerHz + depthHz * sinf(phase);
+    if (f < 80)
+      f = 80;
+    tone(BUZZER_PIN, (unsigned int)f, stepMs);
+    delay(stepMs);
+  }
+  noTone(BUZZER_PIN);
+}
+
+// ——— Helper de ritmo pontilhado (longa-curta)
+inline void dotted(uint16_t noteLong, uint16_t noteShort,
+                   uint16_t longMs = 100, uint16_t shortMs = 40, uint16_t gapMs = 10)
+{
+  beep(noteLong, longMs, 6);
+  beep(noteShort, shortMs, gapMs);
+}
+
+// Clique / Confirmação
+void playClick()
+{
+  beep(C5, 35, 15);
+}
+
+// Miss (água): spray/glitch + bloop curto
+void playMiss()
+{
+  splashSpray(1600, 420, 180, 8);
+  beep(240, 70, 15);
+  beep(190, 90, 25);
+}
+
+// Hit (acertou)
+void playHit()
+{
+  beep(C4, 70, 10);
+  beep(E4, 80, 10);
+  beep(G4, 100, 15);
+}
+
+// Sink (afundou) – FANFARE v3 (pontilhada + salto final)
+void playSink()
+{
+  // (sua Frase A pontilhada estava comentada no trecho enviado; mantive assim)
+  // dotted(C5, E5, 100, 40, 12);
+  // dotted(G5, C5, 100, 40, 12);
+  // dotted(E5, G5, 100, 40, 16);
+
+  // Frase B — cadência + SALTO final
+  beep(B4, 55, 6);   // leading tone
+  beep(C5, 100, 10); // resolução
+  dotted(E5, D5, 95, 38, 10);
+  beep(G5, 180, 0); // salto D5 → G5 (stinger)
+}
+
+// Game Over – Vitória (estendido)
+void playGameOverWin()
+{
+  beep(G4, 90, 10);
+  beep(C5, 110, 10);
+  beep(E5, 120, 12);
+  beep(G5, 140, 40);
+  beep(F5, 120, 15);
+  beep(G5, 150, 20);
+  beep(C6, 260, 40);
+  beep(E5, 110, 10);
+  beep(G5, 130, 10);
+  beep(C6, 300, 60);
+}
+
 // Botões
 #define BTN_1_UP 2
 #define BTN_1_LEFT 3
@@ -536,23 +708,28 @@ void handleButtonsForPlayer(uint8_t player)
 
   if (bUp.fellOrRepeat())
   {
+    playClick();
     moveCursor(0, -1);
   }
   if (bDown.fellOrRepeat())
   {
+    playClick();
     moveCursor(0, 1);
   }
   if (bLeft.fellOrRepeat())
   {
+    playClick();
     moveCursor(-1, 0);
   }
   if (bRight.fellOrRepeat())
   {
+    playClick();
     moveCursor(1, 0);
   }
 
   if (bRot.fellRaw())
   {
+    playClick();
     horizontal = !horizontal;
     if (state == PLACE_1)
       dirtyP1 = true;
@@ -562,6 +739,7 @@ void handleButtonsForPlayer(uint8_t player)
 
   if (bOk.fellRaw())
   {
+    playClick();
     if (state == PLACE_1 && player == 1)
       tryConfirmPlacement(1);
     else if (state == PLACE_2 && player == 2)
@@ -663,6 +841,7 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
 
     if (bOk.fellRaw())
     {
+      playHit();
       while (len > 0 && dest[len - 1] == ' ')
         dest[--len] = '\0';
 
@@ -692,8 +871,7 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
 
 // ---------- TELEMETRIA ----------
 unsigned long matchStartMs = 0;
-randomSeed((unsigned long)micros());
-int gid = random(100000, 999999);
+uint32_t gid = 0;
 
 static void telem_player_names()
 {
@@ -892,9 +1070,15 @@ void tryConfirmPlacement(int myId)
   else
   {
     if (myId == 1)
+    {
+      playMiss();
       LCD_MSG(lcd1, F("Posicao invalida."));
+    }
     else
+    {
+      playMiss();
       LCD_MSG(lcd2, F("Posicao invalida."));
+    }
   }
 }
 
@@ -905,9 +1089,15 @@ void tryShootAt(int enemyId)
   if (c.shot)
   {
     if (enemyId == 2)
+    {
+      playMiss();
       LCD_MSG(lcd1, F("Ja atirou aqui."));
+    }
     else
+    {
+      playMiss();
       LCD_MSG(lcd2, F("Ja atirou aqui."));
+    }
     return;
   }
   c.shot = 1;
@@ -980,15 +1170,18 @@ void tryShootAt(int enemyId)
     telem_shot(attacker, enemyId, curX, curY, true, afundou, remaining[enemyId]);
     if (afundou)
     {
+      playSink();
       LCD_BOTH_MSG(F("Acertou!"), F("Afundou o navio!"));
     }
     else
     {
+      playHit();
       LCD_BOTH_MSG(F("Acertou!"), F("Parte do navio."));
     }
   }
   else
   {
+    playMiss();
     telem_shot(attacker, enemyId, curX, curY, /*hit=*/false, /*sunk=*/false, remaining[enemyId]);
     LCD_BOTH_MSG(F("Errou..."), F(""));
   }
@@ -1060,6 +1253,9 @@ void setup()
   {
   }
 
+  randomSeed((unsigned long)micros() ^ (unsigned long)millis());
+  gid = (uint32_t)random(100000UL, 1000000UL); // 100000..999999
+
   lcd1.init();
   lcd1.backlight();
   lcd2.init();
@@ -1127,6 +1323,7 @@ void loop()
 
   if (state == GAME_OVER)
   {
+    playGameOverWin();
     if (!gameOverDrawn)
     {
       renderGameOverNow();
