@@ -195,21 +195,32 @@ static inline void clear_on(uint8_t panel)
     vp.strip->setPixelColor(vp.base + i, 0);
 }
 
-// Show pushes the whole chain buffer. It's fine to call multiple times.
+const uint8_t BUZZER_PIN = 6;
+
+volatile uint32_t lastShowAt = 0;
+
+inline void ledSafeShow(Adafruit_NeoPixel *s)
+{
+  noTone(BUZZER_PIN);
+  delayMicroseconds(60);
+  s->show();
+  lastShowAt = millis();
+}
+
+// === replace your two show calls ===
 static inline void show_on(uint8_t panel)
 {
   VPanel &vp = VP[panel];
-  vp.strip->show();
+  ledSafeShow(vp.strip);
 }
-
-// Fill only the virtual panel region (NOT the whole chain)
 static inline void fillPanel(uint8_t panel, uint32_t color)
 {
   VPanel &vp = VP[panel];
   for (uint16_t i = 0; i < NPER; ++i)
     vp.strip->setPixelColor(vp.base + i, color);
-  vp.strip->show();
+  ledSafeShow(vp.strip);
 }
+
 void markAllDirty() { dirtyP1 = dirtyP2 = dirtyP3 = dirtyP4 = true; }
 
 Cell (*boardPtr(int id))[W] { return (id == 1 ? b1 : b2); }
@@ -342,15 +353,17 @@ void drawCursor(uint8_t panel, uint8_t x, uint8_t y) { setXY_on(panel, x, y, COL
 void renderIfDirty()
 {
   if (state == GAME_OVER)
-    return; // não redesenhar tela normal após fim de jogo
+    return;
 
   unsigned long now = millis();
   if (now < nextFrameAt)
-    return; // throttling global
+    return;
   nextFrameAt = now + FRAME_MS;
 
-  if (dirtyP1)
+  // ===== CHAIN A (panels 1 & 2) =====
+  if (dirtyP1 || dirtyP2)
   {
+    // Rebuild panel 1
     clear_on(1);
     drawChecker(1);
     drawShips(1, 1, true);
@@ -358,13 +371,10 @@ void renderIfDirty()
     if (state == PLACE_1)
     {
       uint8_t len = FLEET_SIZES[shipIndex];
-      drawGhost(1, curX, curY, len, horizontal); /* drawCursor(1,curX,curY); */
+      drawGhost(1, curX, curY, len, horizontal);
     }
-    show_on(1);
-    dirtyP1 = false;
-  }
-  if (dirtyP2)
-  {
+
+    // Rebuild panel 2
     clear_on(2);
     drawChecker(2);
     drawShots(2, 2);
@@ -372,11 +382,16 @@ void renderIfDirty()
     {
       drawCursor(2, curX, curY);
     }
-    show_on(2);
-    dirtyP2 = false;
+
+    // One atomic frame for the whole chain A
+    ledSafeShow(&chainA);
+    dirtyP1 = dirtyP2 = false;
   }
-  if (dirtyP3)
+
+  // ===== CHAIN B (panels 3 & 4) =====
+  if (dirtyP3 || dirtyP4)
   {
+    // Rebuild panel 3
     clear_on(3);
     drawChecker(3);
     drawShips(3, 2, true);
@@ -384,13 +399,10 @@ void renderIfDirty()
     if (state == PLACE_2)
     {
       uint8_t len = FLEET_SIZES[shipIndex];
-      drawGhost(3, curX, curY, len, horizontal); /* drawCursor(3,curX,curY); */
+      drawGhost(3, curX, curY, len, horizontal);
     }
-    show_on(3);
-    dirtyP3 = false;
-  }
-  if (dirtyP4)
-  {
+
+    // Rebuild panel 4
     clear_on(4);
     drawChecker(4);
     drawShots(4, 1);
@@ -398,8 +410,10 @@ void renderIfDirty()
     {
       drawCursor(4, curX, curY);
     }
-    show_on(4);
-    dirtyP4 = false;
+
+    // One atomic frame for the whole chain B
+    ledSafeShow(&chainB);
+    dirtyP3 = dirtyP4 = false;
   }
 }
 
@@ -424,9 +438,30 @@ void renderGameOverNow()
   fillPanel(panelLoserAtk, COL_LOSE);
 }
 
-// ================== SFX ==================
+static uint32_t rng = 0xC0FFEEu;
+static inline int16_t randSym(int16_t maxAbs)
+{ // [-maxAbs, +maxAbs]
+  rng = 1664525u * rng + 1013904223u;
+  return (int16_t)((int32_t)(rng >> 16) % (2 * maxAbs + 1)) - maxAbs;
+}
 
-const uint8_t BUZZER_PIN = 6;
+static inline void seedRng()
+{
+  uint32_t s = (uint32_t)micros() ^ (uint32_t)millis() ^ (uint32_t)(uintptr_t)&s;
+  s ^= (s << 13);
+  s ^= (s >> 17);
+  s ^= (s << 5);
+  rng ^= s ? s : 0xA5A5A5A5u;
+}
+
+static inline uint32_t makeGid() {
+  uint32_t t = millis(), u = micros();
+  uint32_t g = (t << 17) ^ (t >> 3) ^ (u << 1) ^ rng ^ 0x9E3779B9u;
+  if (g == 0) g = 1; // ensure non-zero
+  return g;
+}
+
+// ================== SFX ==================
 
 // Notas (Hz)
 const uint16_t C4 = 262;
@@ -450,6 +485,13 @@ const uint16_t C6 = 1047;
 // ================== Helpers ==================
 inline void beep(uint16_t freq, uint16_t durMs, uint16_t gapMs = 25)
 {
+  if (durMs <= 40 && (millis() - lastShowAt) < 2)
+  {
+    if (gapMs)
+      delay(gapMs);
+    return;
+  }
+
   if (freq > 0 && durMs > 0)
   {
     tone(BUZZER_PIN, freq, durMs);
@@ -565,7 +607,6 @@ struct Btn
   bool last = HIGH;
   uint32_t lastChange = 0;
 
-  // repeat
   bool isDown = false;
   uint32_t pressedAt = 0, lastRepeat = 0;
 
@@ -599,7 +640,6 @@ struct Btn
     }
     return false;
   }
-
   bool fellOrRepeat()
   {
     if (fellRaw())
@@ -712,8 +752,10 @@ uint16_t sunkShipsBy[3] = {0, 0, 0};
 uint16_t sunkCellsBy[3] = {0, 0, 0}; // soma dos comprimentos dos navios afundados
 
 // UI de nomes: conjunto de caracteres aceitos
-const char CHARSET[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ";
-const int NCH = sizeof(CHARSET) - 1; // sem o '\0'
+const char CHARSET[] PROGMEM =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ";
+static inline char charsetAt(int i) { return (char)pgm_read_byte(&CHARSET[i]); }
+const int NCH = sizeof(CHARSET) - 1;
 
 void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
 {
@@ -746,7 +788,7 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
     lcd.setCursor(0, 1);
     lcd.print(dest);
     lcd.print('>');
-    lcd.print(CHARSET[idx]);
+    lcd.print(charsetAt(idx));
 
     int used = (int)strlen(dest) + 2;
     for (int i = used; i < 16; ++i)
@@ -761,24 +803,28 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
 
     if (bUp.fellOrRepeat())
     {
+      playClick();
       idx = (idx + 1) % NCH;
       changed = true;
     }
     if (bDown.fellOrRepeat())
     {
+      playClick();
       idx = (idx - 1 + NCH) % NCH;
       changed = true;
     }
 
     if (bRight.fellOrRepeat() && len < maxLen)
     {
-      dest[len++] = CHARSET[idx];
+      playClick();
+      dest[len++] = charsetAt(idx);
       dest[len] = '\0';
       changed = true;
     }
 
     if (bLeft.fellOrRepeat() || bRot.fellRaw())
     {
+      playClick();
       if (len > 0)
       {
         dest[--len] = '\0';
@@ -794,7 +840,7 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
 
       if (len == 0)
       {
-        char c = CHARSET[idx];
+        char c = charsetAt(idx);
         if (c == ' ')
         {
           dest[0] = 'P';
@@ -1195,13 +1241,16 @@ void renderAllNow()
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(115200);
   while (!Serial)
   {
   }
 
-  randomSeed((unsigned long)micros() ^ (unsigned long)millis());
-  gid = (uint32_t)random(100000UL, 1000000UL); // 100000..999999
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  seedRng();
+  gid = makeGid(); 
 
   lcd1.init();
   lcd1.backlight();
@@ -1283,7 +1332,6 @@ void loop()
       {
         LCD_BOTH_MSG(F("GAME OVER!"), F("Jogador 2 venceu"));
       }
-      gid++;
     }
     return;
   }
