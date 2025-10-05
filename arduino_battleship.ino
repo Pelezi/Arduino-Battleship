@@ -7,8 +7,8 @@
 #define FPSTR(p) (reinterpret_cast<const __FlashStringHelper *>(p))
 #endif
 
-LiquidCrystal_I2C lcd1(0x20, 16, 2);
-LiquidCrystal_I2C lcd2(0x21, 16, 2);
+LiquidCrystal_I2C lcd1(0x26, 16, 2);
+LiquidCrystal_I2C lcd2(0x27, 16, 2);
 
 // -------- Macros para imprimir no LCD sem gastar RAM --------
 #define LCD_MSG(L, L1)   \
@@ -58,41 +58,64 @@ LiquidCrystal_I2C lcd2(0x21, 16, 2);
 
 // ===== Config =====
 // Tabuleiros
-#define PIN_P1 6 // J1 - próprio
-#define PIN_P2 7 // J1 - visão inimigo
-#define PIN_P3 8 // J2 - próprio
-#define PIN_P4 9 // J2 - visão inimigo
 #define W 8
 #define H 8
 #define BRIGHTNESS 40
 #define SERPENTINE false
 
-// Limite de FPS no Tinkercad (ms por frame)
-#define FRAME_MS 80 // ~12.5 fps
+#define PIN_CHAIN_A 8
+#define PIN_CHAIN_B 9
+
+#define NPER (W * H)
+#define PANELS_PER_CHAIN 2
+#define NPIX_CHAIN (NPER * PANELS_PER_CHAIN)
+
+#define FRAME_MS 80
 
 // Tamanho da frota
-const uint8_t FLEET_SIZES[] = {2, 1};
+const uint8_t FLEET_SIZES[] = {5, 4, 3, 3, 2};
 const uint8_t FLEET_COUNT = sizeof(FLEET_SIZES);
 
 // ===== LEDs =====
-Adafruit_NeoPixel p1(W *H, PIN_P1, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel p2(W *H, PIN_P2, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel p3(W *H, PIN_P3, NEO_GRB + NEO_KHZ800);
-Adafruit_NeoPixel p4(W *H, PIN_P4, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel chainA(NPIX_CHAIN, PIN_CHAIN_A, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel chainB(NPIX_CHAIN, PIN_CHAIN_B, NEO_GRB + NEO_KHZ800);
 
-Adafruit_NeoPixel *P[5] = {nullptr, &p1, &p2, &p3, &p4};
+struct VPanel
+{
+  Adafruit_NeoPixel *strip;
+  uint16_t base;
+};
+VPanel VP[5];
 
-// Paleta
-#define C(r, g, b) p1.Color((r), (g), (b))
-#define COL_WATER1 C(0, 0, 12)   // Azul
-#define COL_WATER2 C(0, 0, 25)   // Azul mais claro
-#define COL_SHIP C(82, 59, 53)   // Amarelo escuro
-#define COL_HIT C(200, 0, 0)     // Vermelho
-#define COL_MISS C(80, 80, 80)   // Cinza
-#define COL_CURSOR C(0, 180, 0)  // Verde
-#define COL_GHOST C(200, 200, 0) // Amarelo
-#define COL_WIN C(0, 160, 0)     // Verde
-#define COL_LOSE C(200, 0, 0)    // Vermelho
+static inline void ledsBegin()
+{
+  chainA.begin();
+  chainB.begin();
+  chainA.setBrightness(BRIGHTNESS);
+  chainB.setBrightness(BRIGHTNESS);
+  chainA.show(); // clear
+  chainB.show(); // clear
+
+  // Panel 1 and 2 live on chain A
+  VP[1] = {&chainA, 0};    // panel 1 -> pixels [0..63]
+  VP[2] = {&chainA, NPER}; // panel 2 -> pixels [64..127]
+
+  // Panel 3 and 4 live on chain B
+  VP[3] = {&chainB, 0};    // panel 3 -> pixels [0..63]
+  VP[4] = {&chainB, NPER}; // panel 4 -> pixels [64..127]
+}
+
+// Color helper: use any strip's Color() helper
+#define C(r, g, b) chainA.Color((r), (g), (b))
+#define COL_WATER1 C(0, 0, 12)
+#define COL_WATER2 C(0, 0, 25)
+#define COL_SHIP C(82, 59, 53)
+#define COL_HIT C(200, 0, 0)
+#define COL_MISS C(80, 80, 80)
+#define COL_CURSOR C(0, 180, 0)
+#define COL_GHOST C(200, 200, 0)
+#define COL_WIN C(0, 160, 0)
+#define COL_LOSE C(200, 0, 0)
 
 // ===== Dicionario =====
 const char MSG_WAIT[] PROGMEM = "Aguarde";
@@ -160,14 +183,31 @@ static inline uint16_t idxXY(uint8_t x, uint8_t y)
 }
 static inline void setXY_on(uint8_t panel, uint8_t x, uint8_t y, uint32_t col)
 {
-  P[panel]->setPixelColor(idxXY(x, y), col);
+  VPanel &vp = VP[panel];
+  vp.strip->setPixelColor(vp.base + idxXY(x, y), col);
 }
-static inline void clear_on(uint8_t panel) { P[panel]->clear(); }
-static inline void show_on(uint8_t panel) { P[panel]->show(); }
+
+static inline void clear_on(uint8_t panel)
+{
+  VPanel &vp = VP[panel];
+  for (uint16_t i = 0; i < NPER; ++i)
+    vp.strip->setPixelColor(vp.base + i, 0);
+}
+
+// Show pushes the whole chain buffer. It's fine to call multiple times.
+static inline void show_on(uint8_t panel)
+{
+  VPanel &vp = VP[panel];
+  vp.strip->show();
+}
+
+// Fill only the virtual panel region (NOT the whole chain)
 static inline void fillPanel(uint8_t panel, uint32_t color)
 {
-  P[panel]->fill(color);
-  P[panel]->show();
+  VPanel &vp = VP[panel];
+  for (uint16_t i = 0; i < NPER; ++i)
+    vp.strip->setPixelColor(vp.base + i, color);
+  vp.strip->show();
 }
 void markAllDirty() { dirtyP1 = dirtyP2 = dirtyP3 = dirtyP4 = true; }
 
@@ -397,8 +437,8 @@ void renderGameOverNow()
 #define BTN_1_ROTATE A0
 #define BTN_1_OK A1
 
-#define BTN_2_ROTATE A2
-#define BTN_2_OK A3
+#define BTN_2_OK A2
+#define BTN_2_ROTATE A3
 
 struct Btn
 {
@@ -547,7 +587,7 @@ uint16_t sunkShipsBy[3] = {0, 0, 0};
 uint16_t sunkCellsBy[3] = {0, 0, 0}; // soma dos comprimentos dos navios afundados
 
 // UI de nomes: conjunto de caracteres aceitos
-const char CHARSET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ";
+const char CHARSET[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ";
 const int NCH = sizeof(CHARSET) - 1; // sem o '\0'
 
 void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
@@ -624,12 +664,22 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
     if (bOk.fellRaw())
     {
       while (len > 0 && dest[len - 1] == ' ')
-        dest[--len] = '\0'; // trim
+        dest[--len] = '\0';
+
       if (len == 0)
       {
-        dest[0] = 'P';
-        dest[1] = (player == 1) ? '1' : '2';
-        dest[2] = '\0';
+        char c = CHARSET[idx];
+        if (c == ' ')
+        {
+          dest[0] = 'P';
+          dest[1] = (player == 1) ? '1' : '2';
+          dest[2] = '\0';
+        }
+        else
+        {
+          dest[0] = c;
+          dest[1] = '\0';
+        }
       }
       break;
     }
@@ -642,7 +692,18 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen)
 
 // ---------- TELEMETRIA ----------
 unsigned long matchStartMs = 0;
-int gid = 0; // id da partida atual (incrementa a cada jogo)
+randomSeed((unsigned long)micros());
+int gid = random(100000, 999999);
+
+static void telem_player_names()
+{
+  Serial.print(F("PN,"));
+  Serial.print(gid);
+  Serial.print(',');
+  Serial.print(name1);
+  Serial.print(',');
+  Serial.println(name2);
+}
 
 static void telem_game_start()
 {
@@ -1025,18 +1086,7 @@ void setup()
 
   LCD_BOTH_MSG(F("Iniciando LEDS"), F(""));
 
-  p1.begin();
-  p1.setBrightness(BRIGHTNESS);
-  p1.show();
-  p2.begin();
-  p2.setBrightness(BRIGHTNESS);
-  p2.show();
-  p3.begin();
-  p3.setBrightness(BRIGHTNESS);
-  p3.show();
-  p4.begin();
-  p4.setBrightness(BRIGHTNESS);
-  p4.show();
+  ledsBegin();
 
   LCD_BOTH_MSG(F("Preenchendo"), F("tabuleiros..."));
 
@@ -1047,20 +1097,19 @@ void setup()
   renderAllNow();
   delay(120);
 
-  LCD_BOTH_MSG(F("Pronto!"), F(""));
-  delay(300);
-
   // 1) Nome do Jogador 1
   LCD_MSG2(lcd1, F("Escolha seu"), F("nome (OK p/ fim)"));
+  delay(500);
   LCD_MSG2(lcd2, F("Aguarde..."), F(""));
   enterNameForPlayer(1, name1, 9);
 
   // 2) Nome do Jogador 2
   LCD_MSG2(lcd2, F("Escolha seu"), F("nome (OK p/ fim)"));
+  delay(500);
   LCD_MSG2(lcd1, F("Aguarde..."), F(""));
   enterNameForPlayer(2, name2, 9);
 
-  gid++;
+  telem_player_names();
 
   LCD_MSG2(lcd1, F("Jogador 1:"), F("posicione navios"));
   LCD_MSG2(lcd2, F("Aguarde"), F("Vez: Jogador 1"));
@@ -1090,6 +1139,7 @@ void loop()
       {
         LCD_BOTH_MSG(F("GAME OVER!"), F("Jogador 2 venceu"));
       }
+      gid++;
     }
     return;
   }
