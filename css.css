@@ -1,0 +1,19 @@
+/* #define COL_WATER1 C(0, 0, 12)
+#define COL_WATER2 C(0, 0, 25)
+#define COL_SHIP C(82, 59, 53)
+#define COL_HIT C(200, 0, 0)
+#define COL_MISS C(80, 80, 80)
+#define COL_CURSOR C(0, 180, 0)
+#define COL_GHOST C(200, 200, 0)
+#define COL_WIN C(0, 160, 0)
+#define COL_LOSE C(200, 0, 0) */
+
+.water1 { color: rgb(0, 0, 12); }
+.water2 { color: rgb(0, 0, 25); }
+.ship { color: rgb(82, 59, 53); }
+.hit { color: rgb(200, 0, 0); }
+.miss { color: rgb(80, 80, 80); }
+.cursor { color: rgb(0, 180, 0); }
+.ghost { color: rgb(200, 200, 0); }
+.win { color: rgb(0, 160, 0); }
+.lose { color: rgb(200, 0, 0); }
