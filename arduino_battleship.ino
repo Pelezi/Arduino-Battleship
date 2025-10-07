@@ -510,9 +510,9 @@ void playGameOverWin() {
 #define BTN_1_RIGHT 5
 
 #define BTN_2_UP 12
-#define BTN_2_LEFT 11
+#define BTN_2_LEFT 13
 #define BTN_2_DOWN 10
-#define BTN_2_RIGHT 13
+#define BTN_2_RIGHT 11
 
 #define BTN_1_ROTATE A0
 #define BTN_1_OK A1
@@ -733,6 +733,10 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen) {
 
     if (bOk.fellRaw()) {
       playHit();
+      if (len < maxLen) {
+        dest[len++] = charsetAt(idx);
+        dest[len] = '\0';
+      }
       while (len > 0 && dest[len - 1] == ' ')
         dest[--len] = '\0';
 
