@@ -54,7 +54,7 @@ LiquidCrystal_I2C lcd2(0x27, 16, 2);
 // ===== Config =====
 #define W 8
 #define H 8
-#define BRIGHTNESS 255
+#define BRIGHTNESS 50
 #define SERPENTINE false
 
 #define PIN_CHAIN_A A2
@@ -109,6 +109,7 @@ static inline void ledsBegin() {
 #define COL_CURSOR C(0, 180, 0)
 #define COL_WIN C(0, 160, 0)
 #define COL_LOSE C(200, 0, 0)
+#define COL_SUNK C(100, 100, 100)
 
 // ===== Dicionario =====
 const char MSG_WAIT[] PROGMEM = "Aguarde";
@@ -134,6 +135,7 @@ struct Cell {
   uint8_t ship : 1;
   uint8_t shot : 1;
   uint8_t hit : 1;
+  uint8_t sunk : 1;
 };
 Cell b1[H][W];
 Cell b2[H][W];
@@ -285,8 +287,8 @@ void placeShipOn(int boardId, int x, int y, int len, bool horiz) {
 void clearBoards() {
   for (uint8_t y = 0; y < H; y++)
     for (uint8_t x = 0; x < W; x++) {
-      b1[y][x] = { 0, 0, 0 };
-      b2[y][x] = { 0, 0, 0 };
+      b1[y][x] = { 0, 0, 0, 0 };
+      b2[y][x] = { 0, 0, 0, 0 };
     }
 }
 
@@ -309,8 +311,16 @@ void drawShots(uint8_t panel, int id) {
   Cell(*B)[W] = boardPtr(id);
   for (uint8_t y = 0; y < H; y++)
     for (uint8_t x = 0; x < W; x++)
-      if (B[y][x].shot)
-        setXY_on(panel, x, y, B[y][x].hit ? COL_HIT : COL_MISS);
+      if (B[y][x].shot) {
+        uint32_t color;
+        if (B[y][x].sunk)
+          color = COL_SUNK;
+        else if (B[y][x].hit)
+          color = COL_HIT;
+        else
+          color = COL_MISS;
+        setXY_on(panel, x, y, color);
+      }
 }
 
 void drawGhost(uint8_t panel, uint8_t x, uint8_t y, uint8_t len, bool horiz) {
@@ -971,6 +981,22 @@ void tryShootAt(int enemyId) {
     if (afundou) {
       sunkShipsBy[attacker]++;
       sunkCellsBy[attacker] += ship_len;
+      
+      // Mark all cells of the sunk ship as sunk
+      if (navio_tam_h > 1) {
+        // Horizontal ship
+        for (int k = x0; k <= x1; k++) {
+          E[y0][k].sunk = 1;
+        }
+      } else if (navio_tam_v > 1) {
+        // Vertical ship
+        for (int k = y0v; k <= y1v; k++) {
+          E[k][curX].sunk = 1;
+        }
+      } else {
+        // Single cell ship
+        E[curY][curX].sunk = 1;
+      }
     }
     telem_shot(attacker, enemyId, curX, curY, true, afundou, remaining[enemyId]);
     if (afundou) {
