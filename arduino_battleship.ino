@@ -34,7 +34,6 @@ LiquidCrystal_I2C lcd2(0x27, 16, 2);
     LCD_MSG2(lcd2, (L1), (L2)); \
   } while (0)
 
-// printf simples (2ª linha)
 #define LCD_PRINTF(L, L1, FMT, VAL) \
   do { \
     char _buf[17]; \
@@ -53,14 +52,13 @@ LiquidCrystal_I2C lcd2(0x27, 16, 2);
   } while (0)
 
 // ===== Config =====
-// Tabuleiros
 #define W 8
 #define H 8
-#define BRIGHTNESS 40
+#define BRIGHTNESS 255
 #define SERPENTINE false
 
-#define PIN_CHAIN_A 8
-#define PIN_CHAIN_B 9
+#define PIN_CHAIN_A A2
+#define PIN_CHAIN_B A3
 
 #define NPER (W * H)
 #define PANELS_PER_CHAIN 2
@@ -68,7 +66,13 @@ LiquidCrystal_I2C lcd2(0x27, 16, 2);
 
 #define FRAME_MS 80
 
-// Tamanho da frota
+// ===== ROTATION CONFIGURATION =====
+// Set rotation for each panel: 0, 1, 2, or 3 (for 0°, 90°, 180°, 270°)
+#define PANEL1_ROTATION 3
+#define PANEL2_ROTATION 0
+#define PANEL3_ROTATION 0
+#define PANEL4_ROTATION 3
+
 const uint8_t FLEET_SIZES[] = { 5, 4, 3, 3, 2 };
 const uint8_t FLEET_COUNT = sizeof(FLEET_SIZES);
 
@@ -79,6 +83,7 @@ Adafruit_NeoPixel chainB(NPIX_CHAIN, PIN_CHAIN_B, NEO_GRB + NEO_KHZ800);
 struct VPanel {
   Adafruit_NeoPixel *strip;
   uint16_t base;
+  uint8_t rotation;
 };
 VPanel VP[5];
 
@@ -87,24 +92,20 @@ static inline void ledsBegin() {
   chainB.begin();
   chainA.setBrightness(BRIGHTNESS);
   chainB.setBrightness(BRIGHTNESS);
-  chainA.show();  // clear
-  chainB.show();  // clear
+  chainA.show();
+  chainB.show();
 
-  // Panel 1 and 2 live on chain A
-  VP[1] = { &chainA, 0 };     // panel 1 -> pixels [0..63]
-  VP[2] = { &chainA, NPER };  // panel 2 -> pixels [64..127]
-
-  // Panel 3 and 4 live on chain B
-  VP[3] = { &chainB, 0 };     // panel 3 -> pixels [0..63]
-  VP[4] = { &chainB, NPER };  // panel 4 -> pixels [64..127]
+  VP[1] = { &chainA, 0, PANEL1_ROTATION };
+  VP[2] = { &chainA, NPER, PANEL2_ROTATION };
+  VP[3] = { &chainB, 0, PANEL3_ROTATION };
+  VP[4] = { &chainB, NPER, PANEL4_ROTATION };
 }
 
-// Color helper: use any strip's Color() helper
 #define C(r, g, b) chainA.Color((r), (g), (b))
 #define COL_WATER1 C(0,25,60)
 #define COL_SHIP C(200, 200, 0)
 #define COL_HIT C(255,30,10)
-#define COL_MISS C(0, 5, 20)
+#define COL_MISS C(0, 0, 0)
 #define COL_CURSOR C(0, 180, 0)
 #define COL_WIN C(0, 160, 0)
 #define COL_LOSE C(200, 0, 0)
@@ -134,8 +135,8 @@ struct Cell {
   uint8_t shot : 1;
   uint8_t hit : 1;
 };
-Cell b1[H][W];  // Jogador 1 (próprio)
-Cell b2[H][W];  // Jogador 2 (próprio)
+Cell b1[H][W];
+Cell b2[H][W];
 uint16_t remaining[3] = { 0, 0, 0 };
 
 // ===== Estado =====
@@ -152,23 +153,44 @@ uint8_t curX = 0, curY = 0;
 bool horizontal = true;
 uint8_t shipIndex = 0;
 
-// winner/GO
 int winnerId = 0;
 bool gameOverDrawn = false;
 
-// ===== Dirty flags por painel =====
 bool dirtyP1 = true, dirtyP2 = true, dirtyP3 = true, dirtyP4 = true;
 unsigned long nextFrameAt = 0;
 
-// ===== Utils =====
+// ===== Rotation-aware coordinate mapping =====
+static inline void rotateXY(uint8_t rotation, uint8_t &x, uint8_t &y) {
+  uint8_t tx = x, ty = y;
+  switch (rotation) {
+    case 1:  // 90° CW
+      x = (W - 1) - ty;
+      y = tx;
+      break;
+    case 2:  // 180°
+      x = (W - 1) - tx;
+      y = (H - 1) - ty;
+      break;
+    case 3:  // 270° CW
+      x = ty;
+      y = (H - 1) - tx;
+      break;
+    default:  // 0° (no rotation)
+      break;
+  }
+}
+
 static inline uint16_t idxXY(uint8_t x, uint8_t y) {
   if (SERPENTINE)
     return (y & 1) ? y * W + (W - 1 - x) : y * W + x;
   return (uint16_t)y * W + x;
 }
+
 static inline void setXY_on(uint8_t panel, uint8_t x, uint8_t y, uint32_t col) {
   VPanel &vp = VP[panel];
-  vp.strip->setPixelColor(vp.base + idxXY(x, y), col);
+  uint8_t rx = x, ry = y;
+  rotateXY(vp.rotation, rx, ry);
+  vp.strip->setPixelColor(vp.base + idxXY(rx, ry), col);
 }
 
 static inline void clear_on(uint8_t panel) {
@@ -177,8 +199,7 @@ static inline void clear_on(uint8_t panel) {
     vp.strip->setPixelColor(vp.base + i, 0);
 }
 
-const uint8_t BUZZER_PIN = 6;
-
+const uint8_t BUZZER_PIN = A1;
 volatile uint32_t lastShowAt = 0;
 
 inline void ledSafeShow(Adafruit_NeoPixel *s) {
@@ -188,11 +209,11 @@ inline void ledSafeShow(Adafruit_NeoPixel *s) {
   lastShowAt = millis();
 }
 
-// === replace your two show calls ===
 static inline void show_on(uint8_t panel) {
   VPanel &vp = VP[panel];
   ledSafeShow(vp.strip);
 }
+
 static inline void fillPanel(uint8_t panel, uint32_t color) {
   VPanel &vp = VP[panel];
   for (uint16_t i = 0; i < NPER; ++i)
@@ -260,6 +281,7 @@ void placeShipOn(int boardId, int x, int y, int len, bool horiz) {
     for (int i = 0; i < len; i++)
       B[y + i][x].ship = 1;
 }
+
 void clearBoards() {
   for (uint8_t y = 0; y < H; y++)
     for (uint8_t x = 0; x < W; x++) {
@@ -272,6 +294,7 @@ void clearBoards() {
 void drawChecker(uint8_t panel) {
   fillPanel(panel, COL_WATER1);
 }
+
 void drawShips(uint8_t panel, int myId, bool revealShips) {
   if (!revealShips)
     return;
@@ -281,6 +304,7 @@ void drawShips(uint8_t panel, int myId, bool revealShips) {
       if (B[y][x].ship && !B[y][x].shot)
         setXY_on(panel, x, y, COL_SHIP);
 }
+
 void drawShots(uint8_t panel, int id) {
   Cell(*B)[W] = boardPtr(id);
   for (uint8_t y = 0; y < H; y++)
@@ -288,15 +312,15 @@ void drawShots(uint8_t panel, int id) {
       if (B[y][x].shot)
         setXY_on(panel, x, y, B[y][x].hit ? COL_HIT : COL_MISS);
 }
+
 void drawGhost(uint8_t panel, uint8_t x, uint8_t y, uint8_t len, bool horiz) {
-  // Verifica se pode posicionar o navio aqui
   bool pode = false;
   if (panel == 1 && state == PLACE_1) {
     pode = canPlaceOn(1, x, y, len, horiz);
   } else if (panel == 3 && state == PLACE_2) {
     pode = canPlaceOn(2, x, y, len, horiz);
   } else {
-    pode = true;  // fallback para outros usos
+    pode = true;
   }
   uint32_t cor = pode ? COL_CURSOR : COL_HIT;
   for (uint8_t k = 0; k < len; k++) {
@@ -306,11 +330,12 @@ void drawGhost(uint8_t panel, uint8_t x, uint8_t y, uint8_t len, bool horiz) {
       setXY_on(panel, gx, gy, cor);
   }
 }
+
 void drawCursor(uint8_t panel, uint8_t x, uint8_t y) {
   setXY_on(panel, x, y, COL_CURSOR);
 }
 
-// ===== Render condicional (só se “dirty” e respeitando FRAME_MS) =====
+// ===== Render condicional =====
 void renderIfDirty() {
   if (state == GAME_OVER)
     return;
@@ -320,9 +345,7 @@ void renderIfDirty() {
     return;
   nextFrameAt = now + FRAME_MS;
 
-  // ===== CHAIN A (panels 1 & 2) =====
   if (dirtyP1 || dirtyP2) {
-    // Rebuild panel 1
     clear_on(1);
     drawChecker(1);
     drawShips(1, 1, true);
@@ -332,7 +355,6 @@ void renderIfDirty() {
       drawGhost(1, curX, curY, len, horizontal);
     }
 
-    // Rebuild panel 2
     clear_on(2);
     drawChecker(2);
     drawShots(2, 2);
@@ -340,14 +362,11 @@ void renderIfDirty() {
       drawCursor(2, curX, curY);
     }
 
-    // One atomic frame for the whole chain A
     ledSafeShow(&chainA);
     dirtyP1 = dirtyP2 = false;
   }
 
-  // ===== CHAIN B (panels 3 & 4) =====
   if (dirtyP3 || dirtyP4) {
-    // Rebuild panel 3
     clear_on(3);
     drawChecker(3);
     drawShips(3, 2, true);
@@ -357,7 +376,6 @@ void renderIfDirty() {
       drawGhost(3, curX, curY, len, horizontal);
     }
 
-    // Rebuild panel 4
     clear_on(4);
     drawChecker(4);
     drawShots(4, 1);
@@ -365,35 +383,25 @@ void renderIfDirty() {
       drawCursor(4, curX, curY);
     }
 
-    // One atomic frame for the whole chain B
     ledSafeShow(&chainB);
     dirtyP3 = dirtyP4 = false;
   }
 }
 
-// ===== Tela final =====
 void renderGameOverNow() {
   int loserId = (winnerId == 1) ? 2 : 1;
-
-  // painéis de tabuleiro próprio
   uint8_t panelWinnerOwn = (winnerId == 1) ? 1 : 3;
   uint8_t panelLoserOwn = (winnerId == 1) ? 3 : 1;
-
-  // painéis de visão do inimigo
   uint8_t panelWinnerAtk = (winnerId == 1) ? 2 : 4;
   uint8_t panelLoserAtk = (winnerId == 1) ? 4 : 2;
 
   fillPanel(panelWinnerOwn, COL_WIN);
   fillPanel(panelLoserOwn, COL_LOSE);
-
-  // opcional: pintar visões também
   fillPanel(panelWinnerAtk, COL_WIN);
   fillPanel(panelLoserAtk, COL_LOSE);
 }
 
 // ================== SFX ==================
-
-// Notas (Hz)
 const uint16_t C4 = 262;
 const uint16_t D4 = 294;
 const uint16_t E4 = 330;
@@ -401,7 +409,6 @@ const uint16_t F4 = 349;
 const uint16_t G4 = 392;
 const uint16_t LA4 = 440;
 const uint16_t B4 = 494;
-
 const uint16_t C5 = 523;
 const uint16_t D5 = 587;
 const uint16_t E5 = 659;
@@ -409,10 +416,8 @@ const uint16_t F5 = 698;
 const uint16_t G5 = 784;
 const uint16_t LA5 = 880;
 const uint16_t B5 = 988;
-
 const uint16_t C6 = 1047;
 
-// ================== Helpers ==================
 inline void beep(uint16_t freq, uint16_t durMs, uint16_t gapMs = 25) {
   if (durMs <= 40 && (millis() - lastShowAt) < 2) {
     if (gapMs)
@@ -429,16 +434,15 @@ inline void beep(uint16_t freq, uint16_t durMs, uint16_t gapMs = 25) {
     delay(gapMs);
 }
 
-// "Spray" com jitter (para o MISS)
 void splashSpray(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t stepMs = 8) {
   uint32_t t0 = millis();
   while (true) {
     uint32_t t = millis() - t0;
     if (t >= totalMs)
       break;
-    float prog = (float)t / (float)totalMs;  // 0..1
+    float prog = (float)t / (float)totalMs;
     float target = startHz + (endHz - startHz) * prog;
-    int jitterRange = (int)(60 * (1.0f - prog)) + 10;  // 70->10
+    int jitterRange = (int)(60 * (1.0f - prog)) + 10;
     int jitter = random(-jitterRange, jitterRange);
     int f = (int)target + jitter;
     if (f < 80)
@@ -449,47 +453,35 @@ void splashSpray(uint16_t startHz, uint16_t endHz, uint16_t totalMs, uint8_t ste
   noTone(BUZZER_PIN);
 }
 
-// ——— Helper de ritmo pontilhado (longa-curta)
 inline void dotted(uint16_t noteLong, uint16_t noteShort,
                    uint16_t longMs = 100, uint16_t shortMs = 40, uint16_t gapMs = 10) {
   beep(noteLong, longMs, 6);
   beep(noteShort, shortMs, gapMs);
 }
 
-// Clique / Confirmação
 void playClick() {
   beep(C5, 35, 15);
 }
 
-// Miss (água): spray/glitch + bloop curto
 void playMiss() {
   splashSpray(1600, 420, 180, 8);
   beep(240, 70, 15);
   beep(190, 90, 25);
 }
 
-// Hit (acertou)
 void playHit() {
   beep(C4, 70, 10);
   beep(E4, 80, 10);
   beep(G4, 100, 15);
 }
 
-// Sink (afundou) – FANFARE v3 (pontilhada + salto final)
 void playSink() {
-  // (sua Frase A pontilhada estava comentada no trecho enviado; mantive assim)
-  // dotted(C5, E5, 100, 40, 12);
-  // dotted(G5, C5, 100, 40, 12);
-  // dotted(E5, G5, 100, 40, 16);
-
-  // Frase B — cadência + SALTO final
-  beep(B4, 55, 6);    // leading tone
-  beep(C5, 100, 10);  // resolução
+  beep(B4, 55, 6);
+  beep(C5, 100, 10);
   dotted(E5, D5, 95, 38, 10);
-  beep(G5, 180, 0);  // salto D5 → G5 (stinger)
+  beep(G5, 180, 0);
 }
 
-// Game Over – Vitória (estendido)
 void playGameOverWin() {
   beep(G4, 90, 10);
   beep(C5, 110, 10);
@@ -504,30 +496,25 @@ void playGameOverWin() {
 }
 
 // Botões
-#define BTN_1_UP 2
-#define BTN_1_LEFT 3
-#define BTN_1_DOWN 4
-#define BTN_1_RIGHT 5
-
-#define BTN_2_UP 12
-#define BTN_2_LEFT 13
-#define BTN_2_DOWN 10
-#define BTN_2_RIGHT 11
-
-#define BTN_1_ROTATE A0
-#define BTN_1_OK A1
-
-#define BTN_2_OK A2
-#define BTN_2_ROTATE A3
+#define BTN_1_UP 13
+#define BTN_1_LEFT 9
+#define BTN_1_DOWN 11
+#define BTN_1_RIGHT 12
+#define BTN_2_UP 7
+#define BTN_2_LEFT 5
+#define BTN_2_DOWN 3
+#define BTN_2_RIGHT 6
+#define BTN_1_ROTATE 10
+#define BTN_1_OK 8
+#define BTN_2_OK 2
+#define BTN_2_ROTATE 4
 
 struct Btn {
   uint8_t pin;
   bool last = HIGH;
   uint32_t lastChange = 0;
-
   bool isDown = false;
   uint32_t pressedAt = 0, lastRepeat = 0;
-
   static constexpr uint16_t debounceMs = 25;
   static constexpr uint16_t repeatDelay = 300;
   static constexpr uint16_t repeatRate = 80;
@@ -555,6 +542,7 @@ struct Btn {
     }
     return false;
   }
+
   bool fellOrRepeat() {
     if (fellRaw())
       return true;
@@ -594,7 +582,6 @@ void moveCursor(int dx, int dy) {
     dirtyP4 = true;
 }
 
-// Lida com o conjunto de botões de um jogador (1 ou 2)
 void handleButtonsForPlayer(uint8_t player) {
   Btn &bUp = (player == 1) ? bUp1 : bUp2;
   Btn &bDown = (player == 1) ? bDown1 : bDown2;
@@ -642,27 +629,25 @@ void handleButtonsForPlayer(uint8_t player) {
   }
 }
 
-// ===== Nomes (máx 9 + '\0') =====
 char name1[10] = "JOGADOR 1";
 char name2[10] = "JOGADOR 2";
 
-// Helper p/ pegar nome por id (1 ou 2)
 const char *PNAME(int id) {
   return (id == 1) ? name1 : name2;
 }
 
-// ===== Estatísticas p/ ranking =====
 uint16_t shotsBy[3] = { 0, 0, 0 };
 uint16_t hitsBy[3] = { 0, 0, 0 };
 uint16_t sunkShipsBy[3] = { 0, 0, 0 };
-uint16_t sunkCellsBy[3] = { 0, 0, 0 };  // soma dos comprimentos dos navios afundados
+uint16_t sunkCellsBy[3] = { 0, 0, 0 };
 
-// UI de nomes: conjunto de caracteres aceitos
 const char CHARSET[] PROGMEM =
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ ";
+
 static inline char charsetAt(int i) {
   return (char)pgm_read_byte(&CHARSET[i]);
 }
+
 const int NCH = sizeof(CHARSET) - 1;
 
 void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen) {
@@ -677,7 +662,6 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen) {
   uint8_t len = 0;
   dest[0] = '\0';
   int idx = 0;
-
   bool first = true;
 
   auto drawName = [&]() {
@@ -760,7 +744,6 @@ void enterNameForPlayer(uint8_t player, char *dest, uint8_t maxLen) {
   }
 }
 
-// ---------- TELEMETRIA ----------
 unsigned long matchStartMs = 0;
 
 static void telem_player_names() {
@@ -853,8 +836,6 @@ static void telem_game_end(int winner) {
   Serial.print(',');
   Serial.print(dur);
   Serial.print(',');
-
-  // P1: name,shots,hits,sunkCells,score
   Serial.print(name1);
   Serial.print(',');
   Serial.print(shotsBy[1]);
@@ -865,8 +846,6 @@ static void telem_game_end(int winner) {
   Serial.print(',');
   Serial.print(s1);
   Serial.print(',');
-
-  // P2
   Serial.print(name2);
   Serial.print(',');
   Serial.print(shotsBy[2]);
@@ -877,11 +856,8 @@ static void telem_game_end(int winner) {
   Serial.print(',');
   Serial.print(s2);
   Serial.print(',');
-
   Serial.println(millis());
 }
-
-// ---------- /TELEMETRIA ----------
 
 void resetStats() {
   shotsBy[1] = shotsBy[2] = 0;
@@ -890,7 +866,6 @@ void resetStats() {
   sunkCellsBy[1] = sunkCellsBy[2] = 0;
 }
 
-// ===== Jogo =====
 void nextStateAfterPlacement() {
   shipIndex = 0;
   curX = 0;
@@ -956,24 +931,19 @@ void tryShootAt(int enemyId) {
     c.hit = 1;
     remaining[enemyId]--;
     hitsBy[attacker]++;
-    // Descobre o tamanho e orientação do navio atingido
     int x0 = curX, y0 = curY, x1 = curX, y1 = curY;
-    // Checa horizontalmente
     while (x0 > 0 && E[y0][x0 - 1].ship)
       x0--;
     while (x1 < W - 1 && E[y0][x1 + 1].ship)
       x1++;
     int navio_tam_h = x1 - x0 + 1;
-    // Checa verticalmente
     int y0v = curY, y1v = curY;
     while (y0v > 0 && E[y0v - 1][curX].ship)
       y0v--;
     while (y1v < H - 1 && E[y1v + 1][curX].ship)
       y1v++;
     int navio_tam_v = y1v - y0v + 1;
-    // Decide se é horizontal, vertical ou tamanho 1
     if (navio_tam_h > 1) {
-      // Checa se todas as partes do navio horizontal estão com hit=1
       afundou = true;
       for (int k = x0; k <= x1; k++) {
         if (E[y0][k].ship && !E[y0][k].hit) {
@@ -982,7 +952,6 @@ void tryShootAt(int enemyId) {
         }
       }
     } else if (navio_tam_v > 1) {
-      // Checa se todas as partes do navio vertical estão com hit=1
       afundou = true;
       for (int k = y0v; k <= y1v; k++) {
         if (E[k][curX].ship && !E[k][curX].hit) {
@@ -991,7 +960,6 @@ void tryShootAt(int enemyId) {
         }
       }
     } else {
-      // Navio de tamanho 1
       afundou = true;
     }
     int ship_len = 1;
@@ -1014,21 +982,18 @@ void tryShootAt(int enemyId) {
     }
   } else {
     playMiss();
-    telem_shot(attacker, enemyId, curX, curY, /*hit=*/false, /*sunk=*/false, remaining[enemyId]);
+    telem_shot(attacker, enemyId, curX, curY, false, false, remaining[enemyId]);
     LCD_BOTH_MSG(F("Errou..."), F(""));
   }
 
-  // marcar paineis relevantes como sujos:
   if (enemyId == 2) {
     dirtyP2 = true;
     dirtyP3 = true;
-  }  // J1 atirou no J2
-  else {
+  } else {
     dirtyP4 = true;
     dirtyP1 = true;
-  }  // J2 atirou no J1
+  }
 
-  // Mensagem de vez do outro jogador
   if (remaining[enemyId] == 0) {
     state = GAME_OVER;
     winnerId = (enemyId == 2) ? 1 : 2;
@@ -1037,7 +1002,6 @@ void tryShootAt(int enemyId) {
     return;
   }
 
-  // Aguarda um pouco para mostrar o resultado antes de trocar a vez
   delay(1200);
   if (state == TURN_1) {
     showTurn(2);
@@ -1116,13 +1080,11 @@ void setup() {
   renderAllNow();
   delay(120);
 
-  // 1) Nome do Jogador 1
   LCD_MSG2(lcd1, F("Escolha seu"), F("nome (OK p/ fim)"));
   delay(500);
   LCD_MSG2(lcd2, F("Aguarde..."), F(""));
   enterNameForPlayer(1, name1, 9);
 
-  // 2) Nome do Jogador 2
   LCD_MSG2(lcd2, F("Escolha seu"), F("nome (OK p/ fim)"));
   delay(500);
   LCD_MSG2(lcd1, F("Aguarde..."), F(""));
